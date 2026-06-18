@@ -493,7 +493,9 @@ function parseOSM(osm, project, seen) {
     } else if (tags.highway) {
       if (DRIVABLE.test(tags.highway)) {
         world.roads.push({ pts, width: ROAD_WIDTH[tags.highway] || 7, kind: tags.highway,
-          name: tags.name || null, sidewalk: tags.sidewalk || null });
+          name: tags.name || null, sidewalk: tags.sidewalk || null,
+          bridge: !!(tags.bridge && tags.bridge !== 'no'),
+          layer: parseInt(tags.layer, 10) || 0 });
       } else if (PATH_TYPES.test(tags.highway)) {
         world.paths.push({ pts, width: 2, isSidewalk: tags.footway === 'sidewalk' });
       }
@@ -1186,19 +1188,20 @@ function resamplePolyline(pts, step) {
   return out;
 }
 
+// Smooth, gap-free road/path ribbon. Both edges come from offsetPolyline (per-vertex
+// MITERED normals) so corners join cleanly with no gaps — no filler discs needed. Both
+// edges of a cross-section share the CENTERLINE height, so the road is perfectly flat
+// side-to-side (only slopes along its length) = no lateral tilt, extremely drivable.
 function addPolyline(tb, rawPts, width, yOff, heightAt, step) {
   const pts = resamplePolyline(rawPts, step || 10);
-  const ys = pts.map(p => heightAt(p.x, p.z) + yOff);
+  if (pts.length < 2) return;
   const hw = width / 2;
+  const L = offsetPolyline(pts, hw), R = offsetPolyline(pts, -hw);
+  const yc = pts.map(p => heightAt(p.x, p.z) + yOff);   // one height per cross-section
   for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1];
-    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
-    if (len < 0.01) continue;
-    const nx = -dz / len * hw, nz = dx / len * hw;
-    tb.quad(a.x + nx, ys[i], a.z + nz, b.x + nx, ys[i + 1], b.z + nz,
-            b.x - nx, ys[i + 1], b.z - nz, a.x - nx, ys[i], a.z - nz);
+    tb.quad(L[i].x, yc[i], L[i].z, L[i + 1].x, yc[i + 1], L[i + 1].z,
+            R[i + 1].x, yc[i + 1], R[i + 1].z, R[i].x, yc[i], R[i].z);
   }
-  for (let i = 1; i < pts.length - 1; i++) tb.disc(pts[i].x, ys[i], pts[i].z, hw, 8);
 }
 
 function makePaintData(world) {
@@ -1625,7 +1628,7 @@ function makeSurfY(heightAt, idx) {
     const h = heightAt(x, z);
     const q = roadQuery(idx, x, z);
     if (!q) return h;
-    const inner = q.w / 2 + 2.6, outer = q.w / 2 + 9;
+    const inner = q.w / 2 + 2.6, outer = q.w / 2 + 20;   // long shoulder so steep hills blend smoothly (no hard step)
     if (q.dist >= outer) return h;
     const hc = heightAt(q.px, q.pz);
     if (q.dist <= inner) return hc;
@@ -1680,6 +1683,22 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
     if (r.width >= 6) for (const side of [-1, 1]) {
       addPolyline(curbTB, offsetPolyline(rp, side * (r.width / 2 + 0.28)), 0.6, 0.34, heightAt);
       addPolyline(edgeTB, offsetPolyline(rp, side * (r.width / 2 - 0.5)), 0.28, 0.37, heightAt);
+    }
+    // metal guardrails along highways + any bridge deck: chunky toy beam on posts
+    if (/^(motorway|trunk|primary|motorway_link|trunk_link|primary_link)$/.test(r.kind) || r.bridge) {
+      const beamCol = new THREE.Color(0xccd2d8), postCol = new THREE.Color(0x8a9098);
+      for (const side of [-1, 1]) {
+        const railLine = resamplePolyline(offsetPolyline(rp, side * (r.width / 2 + 0.55)), 3);
+        for (let i = 0; i < railLine.length - 1; i++) {
+          const a = railLine[i], b = railLine[i + 1];
+          const len = Math.hypot(b.x - a.x, b.z - a.z); if (len < 0.4) continue;
+          const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+          const yaw = Math.atan2(b.z - a.z, b.x - a.x), gy = heightAt(mx, mz) + 0.3;
+          props.box(beamCol, mx, gy + 0.78, mz, len + 0.12, 0.24, 0.1, yaw);   // top beam
+          props.box(beamCol, mx, gy + 0.46, mz, len + 0.12, 0.12, 0.08, yaw);  // lower rail
+          props.box(postCol, a.x, gy + 0.45, a.z, 0.14, 0.95, 0.14, 0);        // post
+        }
+      }
     }
     // sidewalks: explicit OSM tags win, residential streets default to both sides
     for (const side of sidewalkSides(r)) {
