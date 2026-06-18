@@ -1230,8 +1230,8 @@ function makePaintData(world) {
 // Is (x,z) on the SEA side of the coastline? The world is centred on the player's home
 // (origin), which is on land, so the sea is whichever side of the nearest coast segment
 // is opposite the origin. Returns false fast when there's no coastline.
-function isSeaward(x, z, coast) {
-  if (!coast || !coast.length) return false;
+function coastInfo(x, z, coast) {
+  if (!coast || !coast.length) return null;
   let bestD = Infinity, bs = null;
   for (const s of coast) {
     const abx = s.bx - s.ax, abz = s.bz - s.az, L2 = abx * abx + abz * abz || 1;
@@ -1240,12 +1240,13 @@ function isSeaward(x, z, coast) {
     const d = (x - px) * (x - px) + (z - pz) * (z - pz);
     if (d < bestD) { bestD = d; bs = s; }
   }
-  if (!bs) return false;
+  if (!bs) return null;
   const abx = bs.bx - bs.ax, abz = bs.bz - bs.az;
   const sideP = abx * (z - bs.az) - abz * (x - bs.ax);
   const sideHome = abx * (0 - bs.az) - abz * (0 - bs.ax);
-  return (sideP >= 0) !== (sideHome >= 0);   // opposite side from home (land) = sea
+  return { dist: Math.sqrt(bestD), sea: (sideP >= 0) !== (sideHome >= 0) };
 }
+function isSeaward(x, z, coast) { const c = coastInfo(x, z, coast); return !!(c && c.sea); }
 
 // one square ground tile (streamed world = many tiles, no overlap, no z-fighting)
 function buildGroundTile(cx, cz, SIZE, SEG, paint, heightAt) {
@@ -1255,7 +1256,8 @@ function buildGroundTile(cx, cz, SIZE, SEG, paint, heightAt) {
   const pos = g.attributes.position;
   const colors = new Float32Array(pos.count * 3);
   const grass = new THREE.Color(0x72c94e), park = new THREE.Color(0x4fa83d),
-    water = new THREE.Color(0x46a8de), asphalt = new THREE.Color(0x55555e);
+    water = new THREE.Color(0x46a8de), asphalt = new THREE.Color(0x55555e),
+    sand = new THREE.Color(0xe6d6a4);
   const { greens, waters, lots, coast } = paint;
   const SEA_Y = -0.6;   // flat ocean plane
   for (let i = 0; i < pos.count; i++) {
@@ -1265,8 +1267,20 @@ function buildGroundTile(cx, cz, SIZE, SEG, paint, heightAt) {
     for (const gp of greens) if (x >= gp.minx && x <= gp.maxx && z >= gp.minz && z <= gp.maxz && pointInPoly(x, z, gp.ring)) { col = park; break; }
     for (const lp of lots) if (x >= lp.minx && x <= lp.maxx && z >= lp.minz && z <= lp.maxz && pointInPoly(x, z, lp.ring)) { col = asphalt; tintable = false; break; }
     for (const wp of waters) if (x >= wp.minx && x <= wp.maxx && z >= wp.minz && z <= wp.maxz && pointInPoly(x, z, wp.ring)) { col = water; tintable = false; sea = true; break; }
-    if (!sea && isSeaward(x, z, coast)) { col = water; tintable = false; sea = true; }
-    pos.setY(i, sea ? SEA_Y : h - 0.18);
+    let yOut = h - 0.18;
+    if (!sea) {
+      const ci = coastInfo(x, z, coast);
+      if (ci) {
+        if (ci.sea) { col = water; tintable = false; sea = true; yOut = SEA_Y; }
+        else if (ci.dist < 24) {
+          // sandy beach on the land side, sloping down into the surf
+          col = sand; tintable = false;
+          const t = ci.dist / 24;   // 0 at the waterline, 1 inland
+          yOut = (SEA_Y + 0.12) * (1 - t) + (h - 0.18) * t;
+        }
+      }
+    }
+    pos.setY(i, yOut);
     // hypsometric tint: higher = sunnier, slopes = shaded, plus mottled patches —
     // makes elevation readable at a glance
     let bright = 1;
@@ -2320,36 +2334,39 @@ function makeMonsterTruck() {
   return g;
 }
 
+// SMOOTH die-cast Hot Wheels look — curved ellipsoid shells instead of stacked boxes.
+const _ell = (mat, sx, sy, sz, px, py, pz, seg) => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, seg || 22, (seg || 22) - 6), mat);
+  m.scale.set(sx, sy, sz); m.position.set(px, py, pz); return m;
+};
 function makeSportsCar() {
   const g = new THREE.Group();
-  const COL = 0xf2b51f, DARK = 0x1a1d22;
-  const body = _pmat(COL, 95);
-  // long low wedge: floor + sculpted upper + raked nose
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.3, 4.55), body); floor.position.y = 0.46; g.add(floor);
-  const upper = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.32, 3.0), body); upper.position.set(0, 0.74, -0.35); g.add(upper);
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.26, 1.5), body); nose.position.set(0, 0.5, 1.95); nose.rotation.x = 0.16; g.add(nose);
-  const hoodScoop = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 0.9), _pmat(0x16181c, 60)); hoodScoop.position.set(0, 0.7, 1.1); g.add(hoodScoop);
-  // fastback cockpit + raked glass
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.4, 1.7), _pmat(0x141519, 60)); cabin.position.set(0, 1.02, -0.35); g.add(cabin);
-  const wind = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.5, 0.08), _glass()); wind.position.set(0, 0.98, 0.55); wind.rotation.x = -0.62; g.add(wind);
-  const fastback = new THREE.Mesh(new THREE.BoxGeometry(1.46, 0.6, 0.1), _glass(0x0c1622, 0.5)); fastback.position.set(0, 1.0, -1.25); fastback.rotation.x = 0.7; g.add(fastback);
-  // big rear wing on struts
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.08, 0.55), _pmat(DARK, 60)); wing.position.set(0, 1.18, -2.25); g.add(wing);
-  for (const x of [-0.9, 0.9]) { const strut = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.42, 0.12), _pmat(DARK)); strut.position.set(x, 0.95, -2.25); g.add(strut); }
-  // twin racing stripes (matte) over the body
-  for (const x of [-0.3, 0.3]) { const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.02, 4.4), _vmat(0xf2f2f2)); stripe.position.set(x, 0.91, 0.1); g.add(stripe); }
-  // side intakes + skirts + front splitter
-  for (const x of [-1.0, 1.0]) {
-    const intake = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.22, 0.7), _pmat(0x16181c, 40)); intake.position.set(x, 0.62, -0.8); g.add(intake);
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 2.7), _pmat(DARK)); skirt.position.set(x, 0.36, -0.1); g.add(skirt);
+  const COL = 0xf2b51f, DARK = 0x16181c;
+  const body = _pmat(COL, 120, 0xb0b0b0);   // glossy die-cast paint
+  // one flowing teardrop shell + a muscular rear haunch + a tapered nose
+  g.add(_ell(body, 1.02, 0.5, 2.25, 0, 0.66, -0.1, 26));
+  g.add(_ell(body, 0.95, 0.46, 1.05, 0, 0.8, -1.0));
+  g.add(_ell(body, 0.9, 0.34, 1.0, 0, 0.52, 1.65));
+  // dark glass bubble canopy
+  g.add(_ell(_glass(0x0c1622, 0.62), 0.8, 0.44, 1.1, 0, 0.98, 0.0));
+  // glossy racing stripe along the crown
+  g.add(_ell(_vmat(0xf4f4f4), 0.2, 0.5, 2.2, 0, 0.68, -0.1));
+  // muscular rounded fenders over each wheel
+  for (const [x, z] of [[-0.92, 1.45], [0.92, 1.45], [-0.92, -1.45], [0.92, -1.45]]) {
+    const f = _ell(body, 0.5, 0.55, 0.75, x, 0.6, z, 14); g.add(f);
   }
-  const split = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.07, 0.45), _pmat(DARK)); split.position.set(0, 0.34, 2.55); g.add(split);
-  // quad exhaust
-  for (const x of [-0.55, -0.3, 0.3, 0.55]) { const ex = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.2, 8).rotateX(Math.PI / 2), _chrome()); ex.position.set(x, 0.42, -2.55); g.add(ex); }
-  // sleek headlights + LED taillight bar
-  for (const x of [-0.66, 0.66]) { const hl = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.1), _pmat(0xffffff, 120, 0xffffff)); hl.position.set(x, 0.6, 2.74); g.add(hl); }
-  const tlbar = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.06), _pmat(0xe01818, 110, 0xff8888)); tlbar.position.set(0, 0.82, -2.5); g.add(tlbar);
-  for (const [x, z] of [[-0.96, 1.5], [0.96, 1.5], [-0.96, -1.5], [0.96, -1.5]]) { addWheel(g, x, 0.42, z, 0.44, 0.4, 0xe8d24a); addFender(g, x, z, 0.44, 0.3, 0x16181c); }
+  // chrome side strake + low rocker
+  for (const x of [-1.0, 1.0]) g.add(_ell(_chrome(), 0.07, 0.12, 1.9, x, 0.5, -0.1, 12));
+  // rear wing on struts
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.07, 0.5), _pmat(DARK, 60)); wing.position.set(0, 1.14, -2.15); g.add(wing);
+  for (const x of [-0.88, 0.88]) { const st = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.4, 0.12), _pmat(DARK)); st.position.set(x, 0.92, -2.15); g.add(st); }
+  // front splitter
+  const split = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.06, 0.4), _pmat(DARK)); split.position.set(0, 0.33, 2.4); g.add(split);
+  // round pop headlights + LED tail bar + quad chrome tips
+  for (const x of [-0.58, 0.58]) g.add(_ell(_pmat(0xffffff, 130, 0xffffff), 0.16, 0.13, 0.13, x, 0.62, 2.45, 10));
+  const tlbar = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.12, 0.06), _pmat(0xe01818, 120, 0xff8888)); tlbar.position.set(0, 0.78, -2.32); g.add(tlbar);
+  for (const x of [-0.5, -0.26, 0.26, 0.5]) { const ex = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.18, 10).rotateX(Math.PI / 2), _chrome()); ex.position.set(x, 0.42, -2.36); g.add(ex); }
+  for (const [x, z] of [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]]) addWheel(g, x, 0.42, z, 0.45, 0.42, 0xe8d24a);
   addShadow(g, 2.5);
   return g;
 }
