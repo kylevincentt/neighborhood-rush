@@ -4192,7 +4192,46 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   tick();
 }
 
-if (typeof document !== 'undefined' && document.getElementById) boot();
+// ---------------------------------------------------------------- vehicle showroom (test harness)
+// Load with ?test=cars to skip the map entirely and view ALL vehicles spinning in place on a
+// turntable under the real lighting + bloom — a deterministic way to inspect models from every
+// angle. window.__SHOW exposes {cars, cam} so a tester can set angles/zoom from the console.
+function runShowroom() {
+  const so = document.getElementById('start-overlay'); if (so) so.style.display = 'none';
+  const canvas = document.getElementById('game-canvas');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.08;
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x9fcfe6);
+  const cam = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 200);
+  cam.position.set(0, 5.2, 13.5); cam.lookAt(0, 1, 0);
+  scene.add(new THREE.HemisphereLight(0xdcefff, 0x55733f, 0.95));
+  const sun = new THREE.DirectionalLight(0xfff1cf, 1.6); sun.position.set(7, 13, 9); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  const sc = sun.shadow.camera; sc.left = -14; sc.right = 14; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 70; sc.updateProjectionMatrix();
+  scene.add(sun); scene.add(sun.target);
+  const floor = new THREE.Mesh(new THREE.CylinderGeometry(16, 16, 0.3, 56), new THREE.MeshPhongMaterial({ color: 0xeceaf0, shininess: 25 }));
+  floor.position.y = -0.16; floor.receiveShadow = true; scene.add(floor);
+  let composer = null;
+  try { composer = new EffectComposer(renderer); composer.addPass(new RenderPass(scene, cam));
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.85, 0.85)); } catch (e) {}
+  const makers = [makeSportsCar, makeCar, makeMonsterTruck, makeHelicopter];
+  const xs = [-8, -2.7, 2.7, 8];
+  const cars = makers.map((mk, i) => { const m = mk(); m.position.x = xs[i]; m.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(m); return m; });
+  window.__SHOW = { cars, cam, scene, renderer, composer, spin: true, focus: (i) => { cam.position.set(xs[i], 2.6, 7); cam.lookAt(xs[i], 0.8, 0); } };
+  window.addEventListener('resize', () => { cam.aspect = window.innerWidth / window.innerHeight; cam.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); if (composer) composer.setSize(window.innerWidth, window.innerHeight); });
+  const clock = new THREE.Clock();
+  (function loop() { requestAnimationFrame(loop); const dt = clock.getDelta();
+    if (window.__SHOW.spin) for (const m of cars) m.rotation.y += dt * 0.5;
+    if (composer) composer.render(); else renderer.render(scene, cam); })();
+}
+
+if (typeof document !== 'undefined' && document.getElementById) {
+  if (location.search.includes('test=cars')) runShowroom(); else boot();
+}
 </script>
 </body>
 </html>
