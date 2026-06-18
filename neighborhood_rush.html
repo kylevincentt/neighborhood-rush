@@ -274,7 +274,10 @@ async function fetchOSM(lat, lon, onStatus) {
   way["building"](around:${FETCH_RADIUS},${lat},${lon});
   way["leisure"~"^(park|garden|pitch|playground|golf_course)$"](around:${FETCH_RADIUS},${lat},${lon});
   way["landuse"~"^(grass|recreation_ground|meadow|forest|cemetery)$"](around:${FETCH_RADIUS},${lat},${lon});
-  way["natural"="water"](around:${FETCH_RADIUS},${lat},${lon});
+  way["natural"~"^(water|bay|wetland|strait)$"](around:${FETCH_RADIUS},${lat},${lon});
+  way["natural"="coastline"](around:${FETCH_RADIUS},${lat},${lon});
+  way["waterway"="riverbank"](around:${FETCH_RADIUS},${lat},${lon});
+  way["landuse"~"^(reservoir|basin)$"](around:${FETCH_RADIUS},${lat},${lon});
   way["barrier"~"^(fence|wall|hedge|retaining_wall)$"](around:${FETCH_RADIUS},${lat},${lon});
   way["amenity"="parking"](around:${FETCH_RADIUS},${lat},${lon});
   node["natural"="tree"](around:${FETCH_RADIUS},${lat},${lon});
@@ -422,7 +425,7 @@ async function fetchTerrain(lat0, lon0, onStatus, cachedTiles) {
 function parseOSM(osm, project, seen) {
   const world = { buildings: [], roads: [], paths: [], greens: [], waters: [], trees: [],
     lamps: [], crossings: [], signals: [], stopsigns: [], busstops: [], hydrants: [],
-    benches: [], postboxes: [], fences: [], parkings: [], turningCircles: [], shopNodes: [] };
+    benches: [], postboxes: [], fences: [], parkings: [], turningCircles: [], shopNodes: [], coast: [] };
   const prettyTag = (s) => s ? s.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()) : null;
   if (!osm || !osm.elements) return world;
 
@@ -499,7 +502,11 @@ function parseOSM(osm, project, seen) {
       } else if (PATH_TYPES.test(tags.highway)) {
         world.paths.push({ pts, width: 2, isSidewalk: tags.footway === 'sidewalk' });
       }
-    } else if (tags.natural === 'water') {
+    } else if (tags.natural === 'coastline') {
+      if (pts.length >= 2) world.coast.push(pts);   // sea fills the side away from home (origin)
+    } else if (tags.natural === 'water' || tags.natural === 'bay' || tags.natural === 'wetland'
+               || tags.natural === 'strait' || tags.waterway === 'riverbank'
+               || tags.landuse === 'reservoir' || tags.landuse === 'basin') {
       if (pts.length >= 4) world.waters.push(pts.slice(0, -1));
     } else if (tags.barrier) {
       world.fences.push({ pts, kind: tags.barrier });
@@ -1210,8 +1217,34 @@ function makePaintData(world) {
     for (const p of ring) { minx = Math.min(minx, p.x); maxx = Math.max(maxx, p.x); minz = Math.min(minz, p.z); maxz = Math.max(maxz, p.z); }
     return { ring, minx, maxx, minz, maxz };
   };
+  const coastSegs = [];
+  for (const line of (world.coast || [])) {
+    const rs = resamplePolyline(line, 12);
+    for (let i = 0; i < rs.length - 1; i++)
+      coastSegs.push({ ax: rs[i].x, az: rs[i].z, bx: rs[i + 1].x, bz: rs[i + 1].z });
+  }
   return { greens: world.greens.map(withBox), waters: world.waters.map(withBox),
-    lots: (world.parkings || []).map(withBox) };
+    lots: (world.parkings || []).map(withBox), coast: coastSegs };
+}
+
+// Is (x,z) on the SEA side of the coastline? The world is centred on the player's home
+// (origin), which is on land, so the sea is whichever side of the nearest coast segment
+// is opposite the origin. Returns false fast when there's no coastline.
+function isSeaward(x, z, coast) {
+  if (!coast || !coast.length) return false;
+  let bestD = Infinity, bs = null;
+  for (const s of coast) {
+    const abx = s.bx - s.ax, abz = s.bz - s.az, L2 = abx * abx + abz * abz || 1;
+    let t = ((x - s.ax) * abx + (z - s.az) * abz) / L2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const px = s.ax + abx * t, pz = s.az + abz * t;
+    const d = (x - px) * (x - px) + (z - pz) * (z - pz);
+    if (d < bestD) { bestD = d; bs = s; }
+  }
+  if (!bs) return false;
+  const abx = bs.bx - bs.ax, abz = bs.bz - bs.az;
+  const sideP = abx * (z - bs.az) - abz * (x - bs.ax);
+  const sideHome = abx * (0 - bs.az) - abz * (0 - bs.ax);
+  return (sideP >= 0) !== (sideHome >= 0);   // opposite side from home (land) = sea
 }
 
 // one square ground tile (streamed world = many tiles, no overlap, no z-fighting)
@@ -1223,15 +1256,17 @@ function buildGroundTile(cx, cz, SIZE, SEG, paint, heightAt) {
   const colors = new Float32Array(pos.count * 3);
   const grass = new THREE.Color(0x72c94e), park = new THREE.Color(0x4fa83d),
     water = new THREE.Color(0x46a8de), asphalt = new THREE.Color(0x55555e);
-  const { greens, waters, lots } = paint;
+  const { greens, waters, lots, coast } = paint;
+  const SEA_Y = -0.6;   // flat ocean plane
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const h = heightAt(x, z);
-    pos.setY(i, h - 0.18);
-    let col = grass, tintable = true;
+    let col = grass, tintable = true, sea = false;
     for (const gp of greens) if (x >= gp.minx && x <= gp.maxx && z >= gp.minz && z <= gp.maxz && pointInPoly(x, z, gp.ring)) { col = park; break; }
     for (const lp of lots) if (x >= lp.minx && x <= lp.maxx && z >= lp.minz && z <= lp.maxz && pointInPoly(x, z, lp.ring)) { col = asphalt; tintable = false; break; }
-    for (const wp of waters) if (x >= wp.minx && x <= wp.maxx && z >= wp.minz && z <= wp.maxz && pointInPoly(x, z, wp.ring)) { col = water; tintable = false; break; }
+    for (const wp of waters) if (x >= wp.minx && x <= wp.maxx && z >= wp.minz && z <= wp.maxz && pointInPoly(x, z, wp.ring)) { col = water; tintable = false; sea = true; break; }
+    if (!sea && isSeaward(x, z, coast)) { col = water; tintable = false; sea = true; }
+    pos.setY(i, sea ? SEA_Y : h - 0.18);
     // hypsometric tint: higher = sunnier, slopes = shaded, plus mottled patches —
     // makes elevation readable at a glance
     let bright = 1;
@@ -2001,12 +2036,18 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
       return { ring, minx, maxx, minz, maxz };
     };
     const waters = world.waters.map(withBox), lots = (world.parkings || []).map(withBox);
+    const coastSegs = [];
+    for (const line of (world.coast || [])) {
+      const rs = resamplePolyline(line, 12);
+      for (let i = 0; i < rs.length - 1; i++) coastSegs.push({ ax: rs[i].x, az: rs[i].z, bx: rs[i + 1].x, bz: rs[i + 1].z });
+    }
     const taken = new Set();
     const cellKey = (x, z) => Math.floor(x / 11) + '_' + Math.floor(z / 11);
     const free = (x, z, rad) => {
       if (taken.has(cellKey(x, z))) return false;
       if (roadIdx) { const q = roadQuery(roadIdx, x, z); if (q && q.dist < q.w / 2 + 3.5) return false; }
       if (collideCircle(x, z, rad, colliders).hit) return false;
+      if (isSeaward(x, z, coastSegs)) return false;   // no trees on the ocean
       for (const w of waters) if (x >= w.minx && x <= w.maxx && z >= w.minz && z <= w.maxz && pointInPoly(x, z, w.ring)) return false;
       for (const l of lots) if (x >= l.minx && x <= l.maxx && z >= l.minz && z <= l.maxz && pointInPoly(x, z, l.ring)) return false;
       return true;
@@ -2927,6 +2968,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       world.roads.push(...cw.roads); world.buildings.push(...cw.buildings);
       world.greens.push(...cw.greens); world.waters.push(...cw.waters);
       world.parkings.push(...cw.parkings);
+      if (cw.coast) world.coast.push(...cw.coast);
       paintData = makePaintData(world);
       centers.push({ x: px, z: pz });
       ensureGround(px, pz, WORLD_EDGE * 0.8);
