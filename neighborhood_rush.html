@@ -2273,37 +2273,28 @@ function bodyShell(g, w, h, len, y, color, taperTop) {
 
 function makeCar() {
   const g = new THREE.Group();
-  const COL = 0xc62b22;
-  const body = _pmat(COL);
-  // main body: lower sill + tapered mid (sculpted look)
-  const sill = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.42, 4.4), body); sill.position.y = 0.6; g.add(sill);
-  const mid = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.4, 4.2), body); mid.position.y = 0.92; g.add(mid);
-  // sloped hood & trunk
-  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.2, 1.4), body); hood.position.set(0, 1.06, 1.45); hood.rotation.x = -0.05; g.add(hood);
-  const trunk = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.2, 1.1), body); trunk.position.set(0, 1.08, -1.65); g.add(trunk);
-  // greenhouse: roof + raked windshield + rear glass + side glass
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.62, 0.52, 1.7), body); roof.position.set(0, 1.5, -0.35); g.add(roof);
-  const wsF = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.62, 0.1), _glass()); wsF.position.set(0, 1.42, 0.62); wsF.rotation.x = -0.55; g.add(wsF);
-  const wsR = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.55, 0.1), _glass()); wsR.position.set(0, 1.44, -1.2); wsR.rotation.x = 0.6; g.add(wsR);
-  const sideG = new THREE.Mesh(new THREE.BoxGeometry(1.66, 0.46, 1.55), _glass(0x0c1622, 0.5)); sideG.position.set(0, 1.5, -0.35); g.add(sideG);
-  // chrome belt-line + door split lines
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.05, 4.3), _chrome()); belt.position.set(0, 1.16, 0); g.add(belt);
-  for (const x of [-1.01, 1.01]) { const dl = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.5, 0.04), _vmat(0x1a1a1a)); dl.position.set(x, 0.92, -0.1); g.add(dl); }
-  // grille + chrome bumpers
-  const grille = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.28, 0.1), _pmat(0x16181c, 40)); grille.position.set(0, 0.82, 2.21); g.add(grille);
-  for (const z of [2.2, -2.18]) { const bump = new THREE.Mesh(new THREE.BoxGeometry(1.96, 0.26, 0.3), _chrome()); bump.position.set(0, 0.6, z); g.add(bump); }
-  // headlights (bright, chrome ring) + wraparound taillights
-  for (const x of [-0.66, 0.66]) {
-    const ring = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.26, 0.08), _chrome()); ring.position.set(x, 0.92, 2.21); g.add(ring);
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.12), _pmat(0xfff7d8, 120, 0xffffff)); hl.position.set(x, 0.92, 2.24); g.add(hl);
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.2, 0.1), _pmat(0xd01818, 90)); tl.position.set(x, 0.98, -2.22); g.add(tl);
+  const COL = 0xd1342a;   // bright toy red
+  const body = _pmat(COL, 110, 0xb0b0b0);
+  // rounded lower body (hood + trunk faired in) + a smooth domed greenhouse
+  g.add(_ell(body, 1.04, 0.4, 2.3, 0, 0.74, 0, 26));
+  g.add(_ell(body, 0.86, 0.44, 1.3, 0, 1.16, -0.2, 22));
+  // dark wrap-around glass just inside the greenhouse
+  g.add(_ell(_glass(0x0c1622, 0.55), 0.8, 0.36, 1.2, 0, 1.15, -0.2, 20));
+  // chrome belt line
+  g.add(_ell(_chrome(), 1.06, 0.06, 2.32, 0, 0.96, 0, 18));
+  // chrome bumpers, grille, plate
+  for (const z of [2.18, -2.16]) { const b = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.24, 0.28), _chrome()); b.position.set(0, 0.62, z); g.add(b); }
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.26, 0.1), _pmat(0x16181c, 40)); grille.position.set(0, 0.84, 2.18); g.add(grille);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.17, 0.04), _vmat(0xe8e8e0)); plate.position.set(0, 0.64, 2.22); g.add(plate);
+  // round headlights + taillights, side mirrors
+  for (const x of [-0.62, 0.62]) {
+    g.add(_ell(_pmat(0xfff7d8, 120, 0xffffff), 0.18, 0.16, 0.12, x, 0.9, 2.2, 10));
+    g.add(_ell(_pmat(0xd01818, 90), 0.2, 0.16, 0.1, x, 0.95, -2.16, 10));
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.12, 0.1), body); m.position.set(x * 1.6, 1.12, 0.5); g.add(m);
   }
-  // plates
-  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.04), _vmat(0xe8e8e0)); plate.position.set(0, 0.62, 2.24); g.add(plate);
-  // mirrors on stalks + antenna
-  for (const x of [-1.04, 1.04]) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.13, 0.1), body); m.position.set(x, 1.34, 0.55); g.add(m); }
-  const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.6, 4), _vmat(0x111)); ant.position.set(0.7, 1.7, -1.5); g.add(ant);
-  for (const [x, z] of [[-0.95, 1.4], [0.95, 1.4], [-0.95, -1.4], [0.95, -1.4]]) { addWheel(g, x, 0.44, z, 0.46, 0.32, 0xcfd2d6); addFender(g, x, z, 0.46, 0.3); }
+  // subtle integrated fender swells over each wheel
+  for (const [x, z] of [[-1.0, 1.4], [1.0, 1.4], [-1.0, -1.4], [1.0, -1.4]]) g.add(_ell(body, 0.34, 0.32, 0.6, x, 0.6, z, 12));
+  for (const [x, z] of [[-0.95, 1.4], [0.95, 1.4], [-0.95, -1.4], [0.95, -1.4]]) addWheel(g, x, 0.44, z, 0.46, 0.32, 0xcfd2d6);
   addShadow(g, 2.45);
   return g;
 }
@@ -2343,17 +2334,17 @@ function makeSportsCar() {
   const g = new THREE.Group();
   const COL = 0xf2b51f, DARK = 0x16181c;
   const body = _pmat(COL, 120, 0xb0b0b0);   // glossy die-cast paint
-  // one flowing teardrop shell + a muscular rear haunch + a tapered nose
-  g.add(_ell(body, 1.02, 0.5, 2.25, 0, 0.66, -0.1, 26));
-  g.add(_ell(body, 0.95, 0.46, 1.05, 0, 0.8, -1.0));
-  g.add(_ell(body, 0.9, 0.34, 1.0, 0, 0.52, 1.65));
-  // dark glass bubble canopy
-  g.add(_ell(_glass(0x0c1622, 0.62), 0.8, 0.44, 1.1, 0, 0.98, 0.0));
+  // one long, low, flowing shell + a faired rear deck + a pointed nose (low-slung supercar)
+  g.add(_ell(body, 1.12, 0.42, 2.5, 0, 0.6, -0.05, 28));
+  g.add(_ell(body, 1.0, 0.34, 1.15, 0, 0.74, -1.05));
+  g.add(_ell(body, 1.0, 0.3, 1.35, 0, 0.46, 1.7, 20));
+  // low dark glass canopy faired into the body
+  g.add(_ell(_glass(0x0c1622, 0.62), 0.84, 0.36, 1.25, 0, 0.86, -0.05));
   // glossy racing stripe along the crown
-  g.add(_ell(_vmat(0xf4f4f4), 0.2, 0.5, 2.2, 0, 0.68, -0.1));
-  // muscular rounded fenders over each wheel
-  for (const [x, z] of [[-0.92, 1.45], [0.92, 1.45], [-0.92, -1.45], [0.92, -1.45]]) {
-    const f = _ell(body, 0.5, 0.55, 0.75, x, 0.6, z, 14); g.add(f);
+  g.add(_ell(_vmat(0xf4f4f4), 0.22, 0.42, 2.45, 0, 0.58, -0.05));
+  // subtle integrated fender swells (not separate balls)
+  for (const [x, z] of [[-1.0, 1.45], [1.0, 1.45], [-1.0, -1.45], [1.0, -1.45]]) {
+    g.add(_ell(body, 0.36, 0.34, 0.66, x, 0.52, z, 14));
   }
   // chrome side strake + low rocker
   for (const x of [-1.0, 1.0]) g.add(_ell(_chrome(), 0.07, 0.12, 1.9, x, 0.5, -0.1, 12));
