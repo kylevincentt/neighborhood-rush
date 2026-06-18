@@ -2304,10 +2304,10 @@ function makeMonsterTruck() {
   const COL = 0x2f9e44;
   const body = _pmat(COL);
   for (const x of [-0.85, 0.85]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.32, 4.3), _pmat(0x26282c, 40)); rail.position.set(x, 1.2, 0); g.add(rail); }
-  const tub = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.95, 3.9), body); tub.position.y = 2.1; g.add(tub);
-  const hood = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.34, 1.4), body); hood.position.set(0, 2.6, 1.4); g.add(hood);
-  const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.7), _pmat(0x18181c, 60)); scoop.position.set(0, 2.95, 1.4); g.add(scoop);
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(1.98, 0.85, 1.8), body); cab.position.set(0, 3.0, -0.4); g.add(cab);
+  g.add(_ell(body, 1.2, 0.5, 1.98, 0, 2.05, 0, 18));            // rounded body tub
+  g.add(_ell(body, 1.12, 0.24, 0.8, 0, 2.5, 1.4, 16));          // rounded hood
+  const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.7), _pmat(0x18181c, 60)); scoop.position.set(0, 2.9, 1.4); g.add(scoop);
+  g.add(_ell(body, 1.0, 0.52, 0.98, 0, 2.98, -0.35, 18));       // domed cab
   const ws = new THREE.Mesh(new THREE.BoxGeometry(1.84, 0.66, 0.1), _glass()); ws.position.set(0, 3.05, 0.5); ws.rotation.x = -0.45; g.add(ws);
   const sg = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.6, 1.7), _glass(0x0c1622, 0.5)); sg.position.set(0, 3.05, -0.4); g.add(sg);
   // roof light bar
