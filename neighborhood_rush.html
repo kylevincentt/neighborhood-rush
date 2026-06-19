@@ -3845,6 +3845,22 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   const camPos = new THREE.Vector3(dude.x, 6, dude.z - 12);
   let elapsed = 0, finished = false;
 
+  // ---------- debug / verification hooks (enable with ?debug in the URL) ----------
+  // From the browser console (or javascript_tool): window.__NR.top() for a top-down view,
+  // .orbit(yaw,pitch,dist) to free-orbit, .tp(x,z) to teleport, .coast() to inspect the
+  // shoreline, .chase() to return to normal. Lets any location/feature be verified easily.
+  const DBG = { free: false, pos: new THREE.Vector3(0, 80, 0), look: new THREE.Vector3() };
+  if (location.search.includes('debug')) {
+    window.__NR = {
+      scene, camera, world, get car() { return car; }, get dude() { return dude; }, groundLevel, DBG, THREE,
+      tp: (x, z) => { const o = driving ? car : dude; o.x = x; o.z = z; o.y = groundLevel(x, z) + 1; o.vx = o.vz = o.vy = 0; return { x, z }; },
+      top: (h = 140, x, z) => { const o = driving ? car : dude; const cx = x == null ? o.x : x, cz = z == null ? o.z : z; DBG.free = true; DBG.pos.set(cx, h, cz + 0.02); DBG.look.set(cx, 0, cz); return 'top ' + h; },
+      orbit: (yaw = 0, pitch = 0.5, dist = 28, x, z) => { const o = driving ? car : dude; const cx = x == null ? o.x : x, cz = z == null ? o.z : z; DBG.free = true; const hd = dist * Math.cos(pitch); DBG.pos.set(cx + Math.sin(yaw) * hd, dist * Math.sin(pitch) + 2, cz + Math.cos(yaw) * hd); DBG.look.set(cx, 1, cz); return 'orbit'; },
+      chase: () => { DBG.free = false; return 'chase'; },
+      coast: () => { const o = driving ? car : dude; let best = null, bd = Infinity; for (const line of (world.coast || [])) for (const p of line) { const d = (p.x - o.x) ** 2 + (p.z - o.z) ** 2; if (d < bd) { bd = d; best = p; } } return { coastLines: (world.coast || []).length, nearest: best ? { x: Math.round(best.x), z: Math.round(best.z), dist: Math.round(Math.sqrt(bd)) } : null }; },
+    };
+  }
+
   // ---------- drag-to-look camera: dragging across the main screen (NOT the joystick
   // or buttons, which are separate DOM elements on top) orbits the chase camera; it
   // eases back to behind you when you let go.
@@ -4124,6 +4140,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     camera.position.set(camPos.x + sx, Math.max(camPos.y, camFloor) + sy, camPos.z + sz);
     // look slightly ahead of the velocity, SHnR camera style
     camera.lookAt(target.x + target.vx * 0.2, target.y + 1.6, target.z + target.vz * 0.2);
+    if (DBG.free) { camera.position.copy(DBG.pos); camera.lookAt(DBG.look); }   // debug free camera override
     const speedNow = Math.hypot(target.vx, target.vz);
     const targetFov = driving ? 62 + 13 * Math.min(speedNow / CAR_TYPES[Math.max(0, form - 1)].stats.top, 1) : 62;
     if (Math.abs(camera.fov - targetFov) > 0.1) {
