@@ -352,7 +352,10 @@ async function cacheDelete(key) {
   const db = await idbOpen(); if (!db) return;
   try { db.transaction('locations', 'readwrite').objectStore('locations').delete(key); } catch (e) {}
 }
-const locKey = (lat, lon) => lat.toFixed(4) + ',' + lon.toFixed(4);
+// bump CACHE_VER whenever the OSM/terrain pipeline changes (e.g. coastline support added)
+// so previously-cached worlds are re-fetched with the new data instead of loading stale.
+const CACHE_VER = 2;
+const locKey = (lat, lon) => lat.toFixed(4) + ',' + lon.toFixed(4) + '@v' + CACHE_VER;
 
 // ---------------------------------------------------------------- elevation (AWS Open Terrain Tiles, free, no key)
 // Returns { heightAt, tileBufs } — heightAt(x,z) in local meters relative to home.
