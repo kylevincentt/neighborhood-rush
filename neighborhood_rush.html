@@ -1260,7 +1260,7 @@ function buildGroundTile(cx, cz, SIZE, SEG, paint, heightAt) {
   const colors = new Float32Array(pos.count * 3);
   const grass = new THREE.Color(0x72c94e), park = new THREE.Color(0x4fa83d),
     water = new THREE.Color(0x46a8de), asphalt = new THREE.Color(0x55555e),
-    sand = new THREE.Color(0xe6d6a4);
+    sand = new THREE.Color(0xe6d6a4), shallow = new THREE.Color(0x74c8e4), foam = new THREE.Color(0xeaf3f2);
   const { greens, waters, lots, coast } = paint;
   const SEA_Y = -0.6;   // flat ocean plane
   for (let i = 0; i < pos.count; i++) {
@@ -1274,10 +1274,10 @@ function buildGroundTile(cx, cz, SIZE, SEG, paint, heightAt) {
     if (!sea) {
       const ci = coastInfo(x, z, coast);
       if (ci) {
-        if (ci.sea) { col = water; tintable = false; sea = true; yOut = SEA_Y; }
+        if (ci.sea) { col = ci.dist < 10 ? shallow : water; tintable = false; sea = true; yOut = SEA_Y; }
         else if (ci.dist < 24) {
-          // sandy beach on the land side, sloping down into the surf
-          col = sand; tintable = false;
+          // sandy beach on the land side, sloping down into the surf, with a foam waterline
+          col = ci.dist < 3.5 ? foam : sand; tintable = false;
           const t = ci.dist / 24;   // 0 at the waterline, 1 inland
           yOut = (SEA_Y + 0.12) * (1 - t) + (h - 0.18) * t;
         }
