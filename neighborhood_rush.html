@@ -2867,19 +2867,9 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   try {
     composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    // ambient occlusion (desktop only — too heavy for phones) grounds objects with soft
-    // contact shadows in crevices; own try/catch so an API mismatch never kills bloom.
-    if (!LOW_END) {
-      try {
-        const sao = new SAOPass(scene, camera);
-        sao.params.saoIntensity = 0.02;
-        sao.params.saoScale = 1.0;
-        sao.params.saoKernelRadius = 20;
-        sao.params.saoBias = 0.4;
-        sao.params.saoBlur = true;
-        composer.addPass(sao);
-      } catch (e) { /* AO optional */ }
-    }
+    // NOTE: SAO ambient-occlusion pass was tried here but looked broken (harsh black halos +
+    // oversaturation, fighting the bloom) — reverted. Bloom + real sun shadows already give
+    // depth. If revisiting AO, tune SAOPass output mode/intensity carefully (verify via ?debug orbit).
     bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight),
       LOW_END ? 0.42 : 0.55,   // strength
       0.85,                    // radius
