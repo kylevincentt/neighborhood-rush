@@ -502,7 +502,9 @@ function parseOSM(osm, project, seen) {
         world.roads.push({ pts, width: ROAD_WIDTH[tags.highway] || 7, kind: tags.highway,
           name: tags.name || null, sidewalk: tags.sidewalk || null,
           bridge: !!(tags.bridge && tags.bridge !== 'no'),
-          layer: parseInt(tags.layer, 10) || 0 });
+          layer: parseInt(tags.layer, 10) || 0,
+          lanes: parseInt(tags.lanes, 10) || 0,
+          oneway: tags.oneway === 'yes' });
       } else if (PATH_TYPES.test(tags.highway)) {
         world.paths.push({ pts, width: 2, isSidewalk: tags.footway === 'sidewalk' });
       }
@@ -1741,7 +1743,24 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
   for (const r of world.roads) {
     const rp = smoothRoad(r.pts);
     addPolyline(roadTB, rp, r.width, 0.3, heightAt, 4);   // finer step → smooth driving surface
-    if (r.width >= 6) addDashes(lineTB, rp, 0.38, heightAt);
+    // lane markings: solid double-yellow centre on through-roads, dashed centre on residential,
+    // and white dashed lane dividers on multi-lane roads (uses the OSM `lanes` tag)
+    if (r.width >= 6) {
+      const major = /^(motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link)$/.test(r.kind);
+      if (major && !r.oneway) {
+        for (const off of [-0.24, 0.24]) addPolyline(lineTB, offsetPolyline(rp, off), 0.12, 0.385, heightAt, 6);
+      } else {
+        addDashes(lineTB, rp, 0.38, heightAt);
+      }
+      const lanes = r.lanes || (r.width >= 12 ? 4 : 0);
+      if (lanes >= 4) {
+        const half = Math.floor(lanes / 2);
+        for (let k = 1; k < half; k++) {
+          const off = (r.width / lanes) * k;
+          for (const s of [-1, 1]) addDashes(edgeTB, offsetPolyline(rp, s * off), 0.382, heightAt);
+        }
+      }
+    }
     // SHnR-style curb stones lining the asphalt + solid white edge lines
     if (r.width >= 6) for (const side of [-1, 1]) {
       addPolyline(curbTB, offsetPolyline(rp, side * (r.width / 2 + 0.28)), 0.6, 0.34, heightAt);
