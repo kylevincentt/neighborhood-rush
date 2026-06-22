@@ -1636,11 +1636,19 @@ function buildingGeometry(b, color, hBase) {
 // ---------------------------------------------------------------- road-bed system
 // Spatial index of road segments, used to flatten terrain under roads (kills both
 // the car-sinking and the terrain-bleeding-through-asphalt problems).
-function addRoadsToIndex(idx, roads) {
+function addRoadsToIndex(idx, roads, heightAt) {
   for (const r of roads) {
     const pts = resamplePolyline(r.pts, 16);
+    // bridges: compute a level deck height from the (land) endpoints so surfY lifts the
+    // whole corridor onto the deck — the road, rails, sidewalks and car all follow it.
+    let deckY = null;
+    if (r.bridge && heightAt && pts.length >= 2) {
+      const hA = heightAt(pts[0].x, pts[0].z), hB = heightAt(pts[pts.length - 1].x, pts[pts.length - 1].z);
+      deckY = Math.max(hA, hB) + 0.6;
+    }
     for (let i = 0; i < pts.length - 1; i++) {
       const s = { ax: pts[i].x, az: pts[i].z, bx: pts[i + 1].x, bz: pts[i + 1].z, w: r.width, name: r.name };
+      if (deckY != null) { s.bridge = true; s.deckY = deckY; }
       const id = idx.segs.push(s) - 1;
       const pad = s.w / 2 + 10;
       const minx = Math.min(s.ax, s.bx) - pad, maxx = Math.max(s.ax, s.bx) + pad;
@@ -1654,9 +1662,9 @@ function addRoadsToIndex(idx, roads) {
     }
   }
 }
-function buildRoadIndex(world) {
+function buildRoadIndex(world, heightAt) {
   const idx = { cell: 36, grid: new Map(), segs: [] };
-  addRoadsToIndex(idx, world.roads);
+  addRoadsToIndex(idx, world.roads, heightAt);
   return idx;
 }
 
@@ -1670,7 +1678,7 @@ function roadQuery(idx, x, z) {
     const t = Math.max(0, Math.min(1, ((x - s.ax) * abx + (z - s.az) * abz) / (abx * abx + abz * abz || 1)));
     const px = s.ax + abx * t, pz = s.az + abz * t;
     const d = Math.hypot(x - px, z - pz);
-    if (d < bestD) { bestD = d; best = { dist: d, px, pz, w: s.w, name: s.name }; }
+    if (d < bestD) { bestD = d; best = { dist: d, px, pz, w: s.w, name: s.name, bridge: s.bridge, deckY: s.deckY }; }
   }
   return best;
 }
@@ -1681,6 +1689,8 @@ function makeSurfY(heightAt, idx) {
     const h = heightAt(x, z);
     const q = roadQuery(idx, x, z);
     if (!q) return h;
+    // bridges: lift the whole road corridor onto a level deck (terrain/water shows below)
+    if (q.bridge && q.deckY != null && q.dist <= q.w / 2 + 1.0) return q.deckY;
     const inner = q.w / 2 + 2.6, outer = q.w / 2 + 20;   // long shoulder so steep hills blend smoothly (no hard step)
     if (q.dist >= outer) return h;
     const hc = heightAt(q.px, q.pz);
@@ -1750,6 +1760,27 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
           props.box(beamCol, mx, gy + 0.78, mz, len + 0.12, 0.24, 0.1, yaw);   // top beam
           props.box(beamCol, mx, gy + 0.46, mz, len + 0.12, 0.12, 0.08, yaw);  // lower rail
           props.box(postCol, a.x, gy + 0.45, a.z, 0.14, 0.95, 0.14, 0);        // post
+        }
+      }
+    }
+    // bridge structure: a thick deck underside + support piers plunging to the water/valley.
+    // (surfY already lifted the road+car onto the deck — this just gives it a body underneath.)
+    if (r.bridge) {
+      const deckCol = new THREE.Color(0xb9bcc2), pierCol = new THREE.Color(0x9aa0a6);
+      const dl = resamplePolyline(rp, 4);
+      for (let i = 0; i < dl.length - 1; i++) {
+        const a = dl[i], b = dl[i + 1];
+        const len = Math.hypot(b.x - a.x, b.z - a.z); if (len < 0.4) continue;
+        const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+        const yaw = Math.atan2(b.z - a.z, b.x - a.x), dy = heightAt(mx, mz);   // = deck height (surfY)
+        props.box(deckCol, mx, dy - 0.05, mz, len + 0.1, 0.5, r.width + 0.5, yaw);   // deck slab
+      }
+      const pl = resamplePolyline(rp, 16);
+      for (let i = 1; i < pl.length - 1; i++) {
+        const a = pl[i - 1], b = pl[i + 1], dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+        const nx = -dz / L, nz = dx / L, dy = heightAt(pl[i].x, pl[i].z);
+        for (const side of [-1, 1]) {
+          props.box(pierCol, pl[i].x + nx * side * (r.width / 2 - 0.6), dy - 8.5, pl[i].z + nz * side * (r.width / 2 - 0.6), 0.9, 16, 0.9, 0);
         }
       }
     }
@@ -2823,7 +2854,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
 
   // road-bed-aware surfaces: surfY = terrain flattened under roads;
   // groundLevel = what wheels/feet actually stand on (lifts to road deck on asphalt)
-  const roadIdx = buildRoadIndex(world);
+  const roadIdx = buildRoadIndex(world, heightAt);
   const surfY = makeSurfY(heightAt, roadIdx);
   const groundLevel = (x, z) => {
     const q = roadQuery(roadIdx, x, z);
@@ -2974,7 +3005,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
         terrainExtend ? terrainExtend(px, pz, 1500).catch(() => {}) : Promise.resolve(),
       ]);
       const cw = parseOSM(osm2, project, seenIds);
-      addRoadsToIndex(roadIdx, cw.roads);
+      addRoadsToIndex(roadIdx, cw.roads, heightAt);
       const built2 = buildWorld(cw, surfY, roadIdx, colliders);
       enableShadows(built2.group);
       scene.add(built2.group);
