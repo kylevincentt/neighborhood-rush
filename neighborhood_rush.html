@@ -3828,7 +3828,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
         taxi.clock += tBonus; taxi.fares += fare; taxi.deliveries++;
         bonusCoins += fare;
         showToast((quick ? '\u{1F929} CRAAAZY! ' : '✅ Dropped off! ') + '+' + fare +
-          ' &nbsp; +' + tBonus.toFixed(0) + 's' + (taxi.combo > 1 ? ' &nbsp; \u{1F525}x' + taxi.combo : ''));
+          ' · +' + tBonus.toFixed(0) + 's' + (taxi.combo > 1 ? ' · \u{1F525}x' + taxi.combo : ''));
         audio.blip(1300, 0.15, 0.12); audio.blip(1700, 0.25, 0.1);
         newPassenger();
       } else if (taxi.timer <= 0) {
