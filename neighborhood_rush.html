@@ -3736,10 +3736,16 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     }
     return roadVerts[Math.floor(Math.random() * roadVerts.length)] || { x: 0, z: 0 };
   }
+  function nearestRoadVert(x, z) {   // snap a target onto the drivable road network
+    let best = null, bd = Infinity;
+    for (const v of roadVerts) { const d = (v.x - x) ** 2 + (v.z - z) ** 2; if (d < bd) { bd = d; best = v; } }
+    return best || { x, z };
+  }
   function taxiDestName(x, z) {
     if (namedPlaces.length && Math.random() > 0.45) {
       const pl = namedPlaces[Math.floor(Math.random() * namedPlaces.length)];
-      return { x: pl.x, z: pl.z, label: pl.name };
+      const rv = nearestRoadVert(pl.x, pl.z);   // ring sits on the street by the building, reachable
+      return { x: rv.x, z: rv.z, label: pl.name };
     }
     const q = roadQuery(roadIdx, x, z);
     return { x, z, label: q && q.name ? 'the corner of ' + q.name : 'the spot on your map' };
