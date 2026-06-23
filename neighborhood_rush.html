@@ -3710,7 +3710,9 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   }
 
   // ---------- Crazy Taxi mode (T)
-  const taxi = { on: false, phase: 'pickup', tx: 0, tz: 0, timer: 0, fares: 0, label: '' };
+  const taxi = { on: false, phase: 'pickup', tx: 0, tz: 0, timer: 0, fares: 0, label: '',
+                 clock: 0, combo: 0, deliveries: 0, best: 0, fareDist: 0 };
+  const TAXI_CLOCK_START = 90;
   const roadVerts = [];
   const namedPlaces = world.buildings.filter(b => b.name).map(b => ({ x: b.cx, z: b.cz, name: b.name }));
   function harvestVerts(roads) {
@@ -3753,18 +3755,29 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   function toggleTaxi() {
     taxi.on = !taxi.on;
     if (taxi.on) {
-      taxi.fares = 0;
+      taxi.fares = 0; taxi.combo = 0; taxi.deliveries = 0; taxi.clock = TAXI_CLOCK_START;
       newPassenger();
-      showToast('\u{1F695} CRAZY TAXI! Pick up the passenger!');
+      showToast('\u{1F695} CRAZY TAXI! Grab the fare — beat the clock!');
       audio.blip(880, 0.2, 0.12);
     } else {
       paxMesh.visible = ringMesh.visible = arrowMesh.visible = false;
-      showToast('Taxi shift over — fares earned: ' + taxi.fares);
     }
     $('hud-taxi').style.display = taxi.on ? 'block' : 'none';
   }
+  function endTaxiShift() {
+    taxi.best = Math.max(taxi.best, taxi.fares);
+    taxi.on = false;
+    paxMesh.visible = ringMesh.visible = arrowMesh.visible = false;
+    $('hud-taxi').style.borderColor = '#ffd23e';
+    $('hud-taxi').innerHTML = '\u{1F3C1} SHIFT OVER &nbsp; \u{1F4B0}' + taxi.fares +
+      ' &nbsp; \u{1F695}' + taxi.deliveries + ' rides &nbsp; ⭐ best ' + taxi.best +
+      '<br><span style="font-size:13px;color:#ffd23e;font-weight:normal">Press T for another shift</span>';
+    audio.blip(523, 0.16, 0.12); audio.blip(659, 0.16, 0.12); audio.blip(784, 0.45, 0.12);
+  }
   function updateTaxi(dt2) {
     if (!taxi.on) return;
+    taxi.clock -= dt2;
+    if (taxi.clock <= 0) { taxi.clock = 0; endTaxiShift(); return; }
     const P = playerPos();
     const d = Math.hypot(P.x - taxi.tx, P.z - taxi.tz);
     const spd = Math.hypot(P.vx, P.vz);
@@ -3775,35 +3788,46 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     arrowMesh.visible = true;
     arrowMesh.position.set(P.x, P.y + 7.2 + Math.sin(elapsed * 4) * 0.4, P.z);
     arrowMesh.rotation.y = Math.atan2(taxi.tx - P.x, taxi.tz - P.z);
+    const low = taxi.clock < 10;
+    $('hud-taxi').style.borderColor = low && (Math.floor(elapsed * 5) % 2) ? '#ff3b3b' : '#2ae86a';
+    const clk = (low ? '\u{1F525} ' : '⏱ ') + taxi.clock.toFixed(1) + 's';
+    const cmb = taxi.combo > 1 ? ' &nbsp; \u{1F525}x' + taxi.combo : '';
     if (taxi.phase === 'pickup') {
       paxMesh.rotation.y = Math.atan2(P.x - taxi.tx, P.z - taxi.tz);
       paxMesh.rotation.z = Math.sin(elapsed * 6) * 0.15;   // waving you down
-      $('hud-taxi').innerHTML = '\u{1F695} Pick up the passenger! &nbsp;&nbsp;\u{1F4B0} ' + taxi.fares;
+      $('hud-taxi').innerHTML = clk + ' &nbsp; \u{1F44B} Pick up &mdash; ' + Math.round(d) +
+        'm &nbsp; \u{1F4B0}' + taxi.fares + cmb;
       if (d < 7 && spd < 4 && landed) {
         const dest = taxiDestName(...(() => { const v = pickTaxiPoint(180, 650); return [v.x, v.z]; })());
         taxi.phase = 'dropoff'; taxi.tx = dest.x; taxi.tz = dest.z; taxi.label = dest.label;
-        taxi.timer = 18 + Math.hypot(dest.x - P.x, dest.z - P.z) / 12;
+        taxi.fareDist = Math.hypot(dest.x - P.x, dest.z - P.z);
+        taxi.timer = 16 + taxi.fareDist / 13;
         paxMesh.visible = false;
         ringMesh.material.color.set(0xff5533);
         arrowMesh.material.color.set(0xff5533);
-        showToast('\u{1F4CD} "Take me to ' + taxi.label + '!"');
+        showToast('\u{1F4CD} "Take me to ' + taxi.label + '!" — GO!');
         audio.blip(1100, 0.18, 0.12);
       }
     } else {
       taxi.timer -= dt2;
-      $('hud-taxi').innerHTML = '\u{1F4CD} ' + taxi.label + ' &nbsp;&nbsp;⏱ ' +
-        Math.max(0, taxi.timer).toFixed(1) + 's &nbsp;&nbsp;\u{1F4B0} ' + taxi.fares;
+      $('hud-taxi').innerHTML = clk + ' &nbsp; \u{1F4CD} ' + taxi.label + ' &mdash; ' + Math.round(d) +
+        'm &nbsp; ⏳' + Math.max(0, taxi.timer).toFixed(0) + 's &nbsp; \u{1F4B0}' + taxi.fares + cmb;
       if (taxi.timer < 5 && taxi.timer > 0 && Math.floor(taxi.timer * 2) !== Math.floor((taxi.timer + dt2) * 2))
         audio.blip(600, 0.1, 0.1);
       if (d < 8 && spd < 4 && landed) {
-        const fare = 10 + Math.ceil(Math.max(0, taxi.timer));
-        taxi.fares += fare;
+        taxi.combo = Math.min(8, taxi.combo + 1);
+        const quick = taxi.timer > taxi.fareDist / 22;            // delivered briskly
+        const fare = Math.round((12 + Math.ceil(Math.max(0, taxi.timer))) * (1 + (taxi.combo - 1) * 0.25));
+        const tBonus = 5 + Math.min(9, taxi.timer * 0.45);        // extend the shift clock
+        taxi.clock += tBonus; taxi.fares += fare; taxi.deliveries++;
         bonusCoins += fare;
-        showToast('\u{1F929} CRAAAZY! +' + fare + ' coins!');
+        showToast((quick ? '\u{1F929} CRAAAZY! ' : '✅ Dropped off! ') + '+' + fare +
+          ' &nbsp; +' + tBonus.toFixed(0) + 's' + (taxi.combo > 1 ? ' &nbsp; \u{1F525}x' + taxi.combo : ''));
         audio.blip(1300, 0.15, 0.12); audio.blip(1700, 0.25, 0.1);
         newPassenger();
       } else if (taxi.timer <= 0) {
-        showToast('\u{1F621} "Too slow!" — passenger bailed');
+        taxi.combo = 0;
+        showToast('\u{1F621} "Too slow!" — combo lost');
         audio.blip(220, 0.4, 0.12, 'sawtooth');
         newPassenger();
       }
@@ -3911,6 +3935,8 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       top: (h = 140, x, z) => { const o = driving ? car : dude; const cx = x == null ? o.x : x, cz = z == null ? o.z : z; DBG.free = true; DBG.pos.set(cx, h, cz + 0.02); DBG.look.set(cx, 0, cz); return 'top ' + h; },
       orbit: (yaw = 0, pitch = 0.5, dist = 28, x, z) => { const o = driving ? car : dude; const cx = x == null ? o.x : x, cz = z == null ? o.z : z; DBG.free = true; const hd = dist * Math.cos(pitch); DBG.pos.set(cx + Math.sin(yaw) * hd, dist * Math.sin(pitch) + 2, cz + Math.cos(yaw) * hd); DBG.look.set(cx, 1, cz); return 'orbit'; },
       chase: () => { DBG.free = false; return 'chase'; },
+      taxi, taxiToggle: () => { toggleTaxi(); return taxi.on; },
+      taxiGo: () => { const o = driving ? car : dude; o.x = taxi.tx; o.z = taxi.tz; o.y = groundLevel(taxi.tx, taxi.tz) + 1; o.vx = o.vz = o.vy = 0; return { phase: taxi.phase, clock: +taxi.clock.toFixed(1), fares: taxi.fares, combo: taxi.combo, deliveries: taxi.deliveries }; },
       coast: () => { const o = driving ? car : dude; let best = null, bd = Infinity; for (const line of (world.coast || [])) for (const p of line) { const d = (p.x - o.x) ** 2 + (p.z - o.z) ** 2; if (d < bd) { bd = d; best = p; } } return { coastLines: (world.coast || []).length, nearest: best ? { x: Math.round(best.x), z: Math.round(best.z), dist: Math.round(Math.sqrt(bd)) } : null }; },
     };
   }
