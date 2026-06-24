@@ -1845,8 +1845,14 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
       for (let i = 1; i < pl.length - 1; i++) {
         const a = pl[i - 1], b = pl[i + 1], dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
         const nx = -dz / L, nz = dx / L, dy = heightAt(pl[i].x, pl[i].z);
+        // floor under the bridge: sample terrain/water BEYOND the road-bed blend (w/2+24) so the
+        // piers reach all the way down instead of dangling — tall over water, short over a road.
+        const off = r.width / 2 + 24;
+        const floorY = Math.min(heightAt(pl[i].x + nx * off, pl[i].z + nz * off),
+                                heightAt(pl[i].x - nx * off, pl[i].z - nz * off));
+        const ph = Math.max(2, dy - 0.5 - floorY);
         for (const side of [-1, 1]) {
-          props.box(pierCol, pl[i].x + nx * side * (r.width / 2 - 0.6), dy - 8.5, pl[i].z + nz * side * (r.width / 2 - 0.6), 0.9, 16, 0.9, 0);
+          props.box(pierCol, pl[i].x + nx * side * (r.width / 2 - 0.6), dy - 0.5 - ph / 2, pl[i].z + nz * side * (r.width / 2 - 0.6), 0.9, ph, 0.9, 0);
         }
       }
     }
