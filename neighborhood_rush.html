@@ -1394,6 +1394,18 @@ function addCrosswalk(tb, x, z, heading, width, heightAt) {
   }
   void half;
 }
+// Solid white stop bar across the approach (right) half of a road arm, set back from a junction.
+function addStopBar(tb, x, z, heading, width, heightAt, back) {
+  const fx = Math.sin(heading), fz = Math.cos(heading);   // along the road arm
+  const rx = Math.cos(heading), rz = -Math.sin(heading);  // across the road
+  const bx = x + fx * back, bz = z + fz * back;
+  const i0 = 0.25, i1 = Math.max(1.6, width / 2 - 0.4);   // centreline → right kerb (approach lane)
+  const depth = 0.7;
+  const ax = bx + rx * i0, az = bz + rz * i0, cx = bx + rx * i1, cz = bz + rz * i1;
+  const ya = heightAt(ax, az) + 0.4, yc = heightAt(cx, cz) + 0.4;
+  tb.quad(ax - fx * depth / 2, ya, az - fz * depth / 2, cx - fx * depth / 2, yc, cz - fz * depth / 2,
+          cx + fx * depth / 2, yc, cz + fz * depth / 2, ax + fx * depth / 2, ya, az + fz * depth / 2);
+}
 function addFenceRun(C, pts, kind, heightAt) {
   const col = kind === 'hedge' ? HEDGE_COL : (kind === 'fence' ? FENCE_COL : WALL_COL);
   const h = kind === 'hedge' ? 1.2 : (kind === 'fence' ? 1.1 : 1.4);
@@ -1841,6 +1853,15 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
     const nr = nearestRoadPoint(world, cw.x, cw.z);
     if (nr && Math.hypot(nr.x - cw.x, nr.z - cw.z) < 8)
       addCrosswalk(zebraTB, nr.x, nr.z, nr.heading, nr.width, heightAt);
+  }
+  // solid white stop bars on each road arm of a real intersection (complements the lane lines)
+  for (const it of collectIntersections(world)) {
+    const nr = nearestRoadPoint(world, it.x, it.z);
+    const w = nr ? nr.width : 6;
+    if (w < 5) continue;                                   // skip footpaths / driveways
+    const back = w / 2 + 2.4;
+    for (const heading of it.names.values())
+      addStopBar(zebraTB, it.x, it.z, heading, w, heightAt, back);
   }
   if (!roadTB.empty) group.add(new THREE.Mesh(roadTB.geometry(),
     new THREE.MeshLambertMaterial({ color: 0x3f3f47, side: THREE.DoubleSide })));
