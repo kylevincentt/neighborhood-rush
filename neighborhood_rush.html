@@ -2973,13 +2973,23 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   // ground surface WITHOUT the bridge-deck lift — used to draw roads that pass under overpasses
   // at their true low height (no spike to the deck). Attached to roadIdx so buildWorld can reach it.
   roadIdx.groundY = makeSurfY(heightAt, roadIdx, true);
-  const groundLevel = (x, z) => {
+  // Layer-aware ground height. In a bridge corridor there are TWO surfaces: the deck (deckY) and
+  // the road/terrain underneath (groundY). Pass the mover's current y as `curY` and it returns
+  // whichever surface it's resting on — deck if it's up near deck level (drove up the ramp), else
+  // the ground below (driving UNDER the bridge). curY omitted → deck (default for props/NPCs/etc).
+  const DECK_STEP = 4;   // how far below the deck still counts as "on the deck" (ramp tolerance)
+  const groundLevel = (x, z, curY) => {
     const q = roadQuery(roadIdx, x, z);
     let lift = 0;
     if (q) {
       const inner = q.w / 2;
       if (q.dist <= inner) lift = 0.3;
       else if (q.dist < inner + 2.6) lift = 0.3 * (1 - (q.dist - inner) / 2.6);
+    }
+    if (q && q.bridge && q.deckY != null && q.dist <= q.w / 2 + 1.0) {
+      const deck = q.deckY + lift;
+      if (curY == null || curY >= deck - DECK_STEP) return deck;   // riding the deck
+      return roadIdx.groundY(x, z) + lift;                          // under the bridge → ground below
     }
     return surfY(x, z) + lift;
   };
@@ -4092,7 +4102,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       car.vy += (up * 17 - down * 15 - 3.5) * dt;
       car.vy -= car.vy * 1.4 * dt;
       car.x += car.vx * dt; car.z += car.vz * dt; car.y += car.vy * dt;
-      const gH = groundLevel(car.x, car.z);
+      const gH = groundLevel(car.x, car.z, car.y);
       if (car.y <= gH) { car.y = gH; car.vy = Math.max(0, car.vy); }
       if (car.y > 170) { car.y = 170; car.vy = Math.min(0, car.vy); }
       // only collide with buildings when flying low
@@ -4130,10 +4140,10 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       const rgx = Math.cos(car.heading), rgz = -Math.sin(car.heading);
       let vF = car.vx * fwx + car.vz * fwz;
       let vL = car.vx * rgx + car.vz * rgz;
-      const gH0 = groundLevel(car.x, car.z);
+      const gH0 = groundLevel(car.x, car.z, car.y);
       const grounded = car.y <= gH0 + 0.12;
-      const hA = groundLevel(car.x + fwx * 2.2, car.z + fwz * 2.2);
-      const hB = groundLevel(car.x - fwx * 2.2, car.z - fwz * 2.2);
+      const hA = groundLevel(car.x + fwx * 2.2, car.z + fwz * 2.2, car.y);
+      const hB = groundLevel(car.x - fwx * 2.2, car.z - fwz * 2.2, car.y);
       const paved = onRoad(car.x, car.z);
       const offMul = paved ? 1 : TYPE.offroad;
       const topNow = CS.top * (paved ? 1 : Math.max(TYPE.offroad, 0.72));
@@ -4158,7 +4168,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       // vertical: inertia keeps you flying off crests, gravity brings you down
       car.vy -= G_CAR * dt;
       car.y += car.vy * dt;
-      const gH = groundLevel(car.x, car.z);
+      const gH = groundLevel(car.x, car.z, car.y);
       if (car.y <= gH) {
         if (car.vy < -9) {
           shake = Math.min(0.9, shake - car.vy * 0.022);
@@ -4209,7 +4219,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       dude.vx += (dfx * target - dude.vx) * k;
       dude.vz += (dfz * target - dude.vz) * k;
       dude.x += dude.vx * dt; dude.z += dude.vz * dt;
-      const gH = groundLevel(dude.x, dude.z);
+      const gH = groundLevel(dude.x, dude.z, dude.y);
       const grounded = dude.y <= gH + 0.05;
       if (grounded) dude.jumps = 0;
       if (jumpQueued && dude.jumps < 2) {   // double jump, SHnR-style
@@ -4321,7 +4331,7 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       target.z - Math.cos(ang) * hd
     );
     camPos.lerp(desired, 1 - Math.exp(-4.5 * dt));
-    const camFloor = groundLevel(camPos.x, camPos.z) + 1.4;
+    const camFloor = groundLevel(camPos.x, camPos.z, target.y) + 1.4;   // track the player's layer (under vs over a bridge)
     shake = Math.max(0, shake - 2.6 * shake * dt - 0.02 * dt);
     const sx = (Math.random() - 0.5) * shake, sy = (Math.random() - 0.5) * shake, sz = (Math.random() - 0.5) * shake;
     camera.position.set(camPos.x + sx, Math.max(camPos.y, camFloor) + sy, camPos.z + sz);
