@@ -1715,13 +1715,15 @@ function roadQuery(idx, x, z) {
 }
 
 // terrain with flattened road beds: within the bed the ground takes the centerline height
-function makeSurfY(heightAt, idx) {
+function makeSurfY(heightAt, idx, noBridge) {
   return (x, z) => {
     const h = heightAt(x, z);
     const q = roadQuery(idx, x, z);
     if (!q) return h;
-    // bridges: lift the whole road corridor onto a level deck (terrain/water shows below)
-    if (q.bridge && q.deckY != null && q.dist <= q.w / 2 + 1.0) return q.deckY;
+    // bridges: lift the whole road corridor onto a level deck (terrain/water shows below).
+    // noBridge=true skips this — used to draw the GROUND road network so a road passing UNDER an
+    // overpass stays at its low height instead of spiking up to the deck at the crossing point.
+    if (!noBridge && q.bridge && q.deckY != null && q.dist <= q.w / 2 + 1.0) return q.deckY;
     const inner = q.w / 2 + 2.6, outer = q.w / 2 + 20;   // long shoulder so steep hills blend smoothly (no hard step)
     if (q.dist >= outer) return h;
     const hc = heightAt(q.px, q.pz);
@@ -1789,29 +1791,33 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
   };
   for (const r of world.roads) {
     const rp = smoothRoad(r.pts);
-    addPolyline(roadTB, rp, r.width, 0.3, heightAt, 4);   // finer step → smooth driving surface
+    // bridge roads ride the lifted deck (surfY); ordinary roads draw at their TRUE ground height
+    // (groundY, no deck lift) so a road passing UNDER an overpass stays low instead of spiking up
+    // to the deck at the crossing point.
+    const rh = r.bridge ? heightAt : (roadIdx && roadIdx.groundY ? roadIdx.groundY : heightAt);
+    addPolyline(roadTB, rp, r.width, 0.3, rh, 4);   // finer step → smooth driving surface
     // lane markings: solid double-yellow centre on through-roads, dashed centre on residential,
     // and white dashed lane dividers on multi-lane roads (uses the OSM `lanes` tag)
     if (r.width >= 6) {
       const major = /^(motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link)$/.test(r.kind);
       if (major && !r.oneway) {
-        for (const off of [-0.24, 0.24]) addPolyline(lineTB, offsetPolyline(rp, off), 0.12, 0.385, heightAt, 6);
+        for (const off of [-0.24, 0.24]) addPolyline(lineTB, offsetPolyline(rp, off), 0.12, 0.385, rh, 6);
       } else {
-        addDashes(lineTB, rp, 0.38, heightAt);
+        addDashes(lineTB, rp, 0.38, rh);
       }
       const lanes = r.lanes || (r.width >= 12 ? 4 : 0);
       if (lanes >= 4) {
         const half = Math.floor(lanes / 2);
         for (let k = 1; k < half; k++) {
           const off = (r.width / lanes) * k;
-          for (const s of [-1, 1]) addDashes(edgeTB, offsetPolyline(rp, s * off), 0.382, heightAt);
+          for (const s of [-1, 1]) addDashes(edgeTB, offsetPolyline(rp, s * off), 0.382, rh);
         }
       }
     }
     // SHnR-style curb stones lining the asphalt + solid white edge lines
     if (r.width >= 6) for (const side of [-1, 1]) {
-      addPolyline(curbTB, offsetPolyline(rp, side * (r.width / 2 + 0.28)), 0.6, 0.34, heightAt);
-      addPolyline(edgeTB, offsetPolyline(rp, side * (r.width / 2 - 0.5)), 0.28, 0.37, heightAt);
+      addPolyline(curbTB, offsetPolyline(rp, side * (r.width / 2 + 0.28)), 0.6, 0.34, rh);
+      addPolyline(edgeTB, offsetPolyline(rp, side * (r.width / 2 - 0.5)), 0.28, 0.37, rh);
     }
     // metal guardrails along highways + any bridge deck: chunky toy beam on posts
     if (/^(motorway|trunk|primary|motorway_link|trunk_link|primary_link)$/.test(r.kind) || r.bridge) {
@@ -1822,7 +1828,7 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
           const a = railLine[i], b = railLine[i + 1];
           const len = Math.hypot(b.x - a.x, b.z - a.z); if (len < 0.4) continue;
           const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-          const yaw = Math.atan2(b.z - a.z, b.x - a.x), gy = heightAt(mx, mz) + 0.3;
+          const yaw = Math.atan2(b.z - a.z, b.x - a.x), gy = rh(mx, mz) + 0.3;
           props.box(beamCol, mx, gy + 0.78, mz, len + 0.12, 0.24, 0.1, yaw);   // top beam
           props.box(beamCol, mx, gy + 0.46, mz, len + 0.12, 0.12, 0.08, yaw);  // lower rail
           props.box(postCol, a.x, gy + 0.45, a.z, 0.14, 0.95, 0.14, 0);        // post
@@ -1859,7 +1865,7 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
     // sidewalks: explicit OSM tags win, residential streets default to both sides
     for (const side of sidewalkSides(r)) {
       const walkLine = offsetPolyline(rp, side * (r.width / 2 + 1.15));
-      addPolyline(walkTB, walkLine, 1.7, 0.27, heightAt, 5);
+      addPolyline(walkTB, walkLine, 1.7, 0.27, rh, 5);
       // expansion-joint seams across the walk every ~3.5m
       const rs = resamplePolyline(walkLine, 3.5);
       for (let i = 1; i < rs.length - 1; i++) {
@@ -2964,6 +2970,9 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   // groundLevel = what wheels/feet actually stand on (lifts to road deck on asphalt)
   const roadIdx = buildRoadIndex(world, heightAt);
   const surfY = makeSurfY(heightAt, roadIdx);
+  // ground surface WITHOUT the bridge-deck lift — used to draw roads that pass under overpasses
+  // at their true low height (no spike to the deck). Attached to roadIdx so buildWorld can reach it.
+  roadIdx.groundY = makeSurfY(heightAt, roadIdx, true);
   const groundLevel = (x, z) => {
     const q = roadQuery(roadIdx, x, z);
     let lift = 0;
