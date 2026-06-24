@@ -2938,26 +2938,12 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   try {
     composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    // Ambient occlusion — DESKTOP ONLY (mobile/LOW_END skips it for perf). Runs BEFORE bloom so it
-    // darkens crevices, then highlights bloom. Kept very subtle + blurred to avoid the harsh black
-    // halos the first attempt produced. output=Default(0) composites AO onto the beauty pass.
-    if (!LOW_END) {
-      try {
-        const sao = new SAOPass(scene, camera);
-        sao.params.output = 0;            // 0 = Default (beauty × AO), NOT the raw-AO debug view
-        sao.params.saoBias = 0.4;
-        sao.params.saoIntensity = 0.006;  // deliberately faint — contact shading, not grime
-        sao.params.saoScale = 0.9;
-        sao.params.saoKernelRadius = 22;
-        sao.params.saoMinResolution = 0;
-        sao.params.saoBlur = true;        // soften so edges read as soft contact shadow
-        sao.params.saoBlurRadius = 10;
-        sao.params.saoBlurStdDev = 5;
-        sao.params.saoBlurDepthCutoff = 0.012;
-        composer.addPass(sao);
-        window.__sao = sao;               // A/B handle for verification (sao.enabled = true/false)
-      } catch (e) { /* SAO unavailable → skip, bloom still runs */ }
-    }
+    // NOTE: SAOPass ambient occlusion tried TWICE here and reverted both times — in this bloom
+    // pipeline it produces bright green/yellow edge halos (normal-edge artifact amplified by bloom),
+    // not subtle darkening, regardless of intensity/blur/output settings. Don't retry SAOPass.
+    // The right AO for this toy renderer is BAKED: darken building-base + ground verts near footprints
+    // at build time (vertex colors), or a dark radial contact-shadow decal under buildings/props —
+    // full control, mobile-cheap, no post-processing. Bloom + real sun shadows already give depth.
     bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight),
       LOW_END ? 0.42 : 0.55,   // strength
       0.85,                    // radius
