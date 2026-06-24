@@ -1653,16 +1653,29 @@ function buildingGeometry(b, color, hBase) {
 function addRoadsToIndex(idx, roads, heightAt) {
   for (const r of roads) {
     const pts = resamplePolyline(r.pts, 16);
-    // bridges: compute a level deck height from the (land) endpoints so surfY lifts the
-    // whole corridor onto the deck — the road, rails, sidewalks and car all follow it.
-    let deckY = null;
+    // bridges: build a per-point deck profile that RAMPS smoothly from each approach's terrain
+    // height (no hard step at the ends) and ARCHES over a valley/water with a minimum clearance —
+    // surfY then lifts the whole corridor (road, rails, sidewalks, car) onto this profile.
+    let deckH = null;
     if (r.bridge && heightAt && pts.length >= 2) {
-      const hA = heightAt(pts[0].x, pts[0].z), hB = heightAt(pts[pts.length - 1].x, pts[pts.length - 1].z);
-      deckY = Math.max(hA, hB) + 0.6;
+      const n = pts.length;
+      const hA = heightAt(pts[0].x, pts[0].z), hB = heightAt(pts[n - 1].x, pts[n - 1].z);
+      let span = 0, minTerr = Infinity;
+      for (let i = 0; i < n; i++) { minTerr = Math.min(minTerr, heightAt(pts[i].x, pts[i].z));
+        if (i) span += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); }
+      const midBase = (hA + hB) / 2;
+      const dip = Math.max(0, midBase - minTerr);              // how far terrain falls away mid-span
+      const clearance = Math.min(9, span * 0.10);              // bigger bridges sit higher (capped)
+      const peak = Math.max(0, clearance - dip);               // arch only as far as endpoints don't already clear
+      deckH = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const t = n > 1 ? i / (n - 1) : 0;
+        deckH[i] = (hA * (1 - t) + hB * t) + peak * Math.sin(Math.PI * t) + 0.6;
+      }
     }
     for (let i = 0; i < pts.length - 1; i++) {
       const s = { ax: pts[i].x, az: pts[i].z, bx: pts[i + 1].x, bz: pts[i + 1].z, w: r.width, name: r.name };
-      if (deckY != null) { s.bridge = true; s.deckY = deckY; }
+      if (deckH) { s.bridge = true; s.deckYA = deckH[i]; s.deckYB = deckH[i + 1]; }
       const id = idx.segs.push(s) - 1;
       const pad = s.w / 2 + 10;
       const minx = Math.min(s.ax, s.bx) - pad, maxx = Math.max(s.ax, s.bx) + pad;
@@ -1692,7 +1705,11 @@ function roadQuery(idx, x, z) {
     const t = Math.max(0, Math.min(1, ((x - s.ax) * abx + (z - s.az) * abz) / (abx * abx + abz * abz || 1)));
     const px = s.ax + abx * t, pz = s.az + abz * t;
     const d = Math.hypot(x - px, z - pz);
-    if (d < bestD) { bestD = d; best = { dist: d, px, pz, w: s.w, name: s.name, bridge: s.bridge, deckY: s.deckY }; }
+    if (d < bestD) {
+      bestD = d;
+      const deckY = s.bridge ? s.deckYA + (s.deckYB - s.deckYA) * t : null;   // interpolate the arch
+      best = { dist: d, px, pz, w: s.w, name: s.name, bridge: s.bridge, deckY };
+    }
   }
   return best;
 }
@@ -1715,6 +1732,23 @@ function makeSurfY(heightAt, idx) {
   };
 }
 
+// Baked ambient-occlusion contact shadow: a soft radial dark blob, built once, mapped onto
+// flat decal quads under buildings so they read as grounded (replaces the dead SAOPass path).
+let _shadowTex = null;
+function shadowTexture() {
+  if (_shadowTex !== null) return _shadowTex;
+  if (typeof document === 'undefined') { _shadowTex = null; return null; }
+  const s = 64, cv = document.createElement('canvas'); cv.width = cv.height = s;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(s / 2, s / 2, s * 0.10, s / 2, s / 2, s * 0.5);
+  g.addColorStop(0, 'rgba(0,0,0,0.5)');
+  g.addColorStop(0.55, 'rgba(0,0,0,0.24)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = g; c.fillRect(0, 0, s, s);
+  _shadowTex = new THREE.CanvasTexture(cv);
+  return _shadowTex;
+}
+
 // Builds static world meshes + collision data for one chunk of map data.
 // Pass sharedColliders to append a streamed chunk into an existing world.
 function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
@@ -1723,6 +1757,7 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
   const colliders = sharedColliders || { buildings: [], grid: new Map(), cell: 40 };
   const baseIdx = colliders.buildings.length;
   for (const b of world.buildings) colliders.buildings.push(b);
+  const shPos = [], shUV = [], shIdx = [];   // merged baked-AO contact-shadow decals (1 draw call)
   // NOTE: the spatial hash is built AFTER the building loop below, because archetype
   // buildings replace their collision ring with the rendered footprint.
   // (ground is built separately as tiles — see ensureGround in startGame)
@@ -1975,6 +2010,18 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
     const hBase = gMax;
     const area = polyArea(b.ring);
     const obb = obbOf(b.ring);
+    if (obb) {   // soft contact-shadow decal hugging this building's footprint (baked AO)
+      const pw = obb.w / 2 + 1.7, pd = obb.d / 2 + 1.7;
+      const ca = Math.cos(obb.angle), sa = Math.sin(obb.angle), yy = hBase + 0.08;
+      const base = shPos.length / 3;
+      const cn = [[-pw, -pd], [pw, -pd], [pw, pd], [-pw, pd]], uv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+      for (let k = 0; k < 4; k++) {
+        const lx = cn[k][0], lz = cn[k][1];
+        shPos.push(obb.cx + ca * lx - sa * lz, yy, obb.cz + sa * lx + ca * lz);
+        shUV.push(uv[k][0], uv[k][1]);
+      }
+      shIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
     const fill = obb ? area / Math.max(1, obb.area) : 0;
     let cls = classifyBuilding(b, obb, fill, area);
     if (b === homeB && obb) cls = 'home';
@@ -2180,6 +2227,21 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
     brkTrees.push({ x: t.x, z: t.z, scale: s, green, kind });
   }
   stats.veg = vegPts.length;
+
+  // bake all the contact-shadow decals into ONE transparent mesh (mobile-safe single draw call)
+  if (shIdx.length) {
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(shPos, 3));
+    sg.setAttribute('uv', new THREE.Float32BufferAttribute(shUV, 2));
+    sg.setIndex(shIdx);
+    sg.computeVertexNormals();
+    const stex = shadowTexture();
+    const smat = new THREE.MeshBasicMaterial({ map: stex, transparent: true,
+      depthWrite: false, opacity: 0.7, polygonOffset: true, polygonOffsetFactor: -2 });
+    const smesh = new THREE.Mesh(sg, smat);
+    smesh.renderOrder = 1;       // draw over the ground tiles
+    group.add(smesh);
+  }
 
   return { group, colliders, stats, pois,
     breakables: { trees: brkTrees, lamps: brkLamps, hydrants: brkHydrants, mailboxes: brkMailboxes } };
