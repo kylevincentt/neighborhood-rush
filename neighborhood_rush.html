@@ -2828,6 +2828,13 @@ function boot() {
   }
   renderSaved();
 
+  // deterministic test rig — skip geocoding/terrain entirely and build a synthetic overpass world
+  if (location.search.includes('test=overpass')) {
+    startOverlay.style.display = 'none'; loadingOverlay.style.display = 'none';
+    startGame({ lat: 37.5, lon: -122.3, name: 'Test Overpass' }, { elements: [] }, () => 0, true, null);
+    return;
+  }
+
   // begin accepts either a resolved location {lat,lon,name} or a query string
   const begin = async (locOrQuery) => {
     errEl.textContent = '';
@@ -2963,6 +2970,17 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   const project = makeProjector(loc.lat, loc.lon);
   const seenIds = new Set();
   const world = parseOSM(osm, project, seenIds);
+  // ---- deterministic test rig (?test=overpass): a flat world with one road flying cleanly over
+  // another, so drive-under / drive-over can be validated WITHOUT any geocoding or terrain network.
+  const TEST_OVERPASS = typeof location !== 'undefined' && location.search.includes('test=overpass');
+  if (TEST_OVERPASS) {
+    heightAt = () => 0;                                  // perfectly flat ground
+    world.roads.length = 0; world.buildings.length = 0; world.paths.length = 0;
+    const lineX = [], lineZ = [];
+    for (let d = -240; d <= 240; d += 20) { lineX.push({ x: d, z: 0 }); lineZ.push({ x: 0, z: d }); }
+    world.roads.push({ pts: lineX, width: 14, kind: 'primary', name: 'Under Street', bridge: false, layer: 0, lanes: 2, oneway: false });
+    world.roads.push({ pts: lineZ, width: 14, kind: 'primary', name: 'Overpass', bridge: true, layer: 1, lanes: 2, oneway: false });
+  }
   const centers = [{ x: 0, z: 0 }];   // loaded-area centers (grows as the world streams in)
   let expanding = false, expandTimer = 2;
 
@@ -3212,6 +3230,12 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     carMeshes[0].visible = true;
     carMeshes[0].position.set(car.x, car.y, car.z);
     carMeshes[0].rotation.set(0, car.heading, 0);
+  }
+  if (TEST_OVERPASS) {   // start on the under-road, ~70m back, facing the overpass so W drives under it
+    car.x = -70; car.z = 0; car.heading = Math.PI / 2; car.vx = car.vz = car.vy = 0;
+    car.y = groundLevel(car.x, car.z, 0);
+    dude.x = -70; dude.z = 5; dude.heading = Math.PI / 2; dude.y = groundLevel(dude.x, dude.z, 0);
+    carMeshes[0].position.set(car.x, car.y, car.z); carMeshes[0].rotation.set(0, car.heading, 0);
   }
   scene.add(dude.mesh);
 
