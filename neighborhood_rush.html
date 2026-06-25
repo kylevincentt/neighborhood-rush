@@ -1805,22 +1805,30 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
   // breakable roadside objects (rendered as instanced meshes, knocked flying by vehicles)
   const brkTrees = [], brkLamps = [], brkHydrants = [], brkMailboxes = [];
   let lampCount = world.lamps.length;
-  // Chaikin corner-cutting smooths OSM's sparse/jagged road vertices into flowing
-  // curves before we extrude — kills the faceted "lots of polygons" road look.
-  const smoothRoad = (pts) => {
-    if (!pts || pts.length < 3) return pts;
-    let p = pts;
-    for (let k = 0; k < 2; k++) {
-      const out = [p[0]];
-      for (let i = 0; i < p.length - 1; i++) {
-        const a = p[i], b = p[i + 1];
-        out.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 });
-        out.push({ x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
+  // Centripetal Catmull-Rom spline through the OSM road points: flows THROUGH each node (doesn't
+  // cut corners like Chaikin) and densifies sparse vertices into a smooth curve — kills the
+  // faceted "lots of polygons" look while keeping the road on its true path.
+  const lerpP = (a, b, u) => ({ x: a.x + (b.x - a.x) * u, z: a.z + (b.z - a.z) * u });
+  const smoothRoad = (raw) => {
+    if (!raw || raw.length < 3) return raw;
+    const P = [raw[0]];                                    // drop near-duplicate points first
+    for (let i = 1; i < raw.length; i++)
+      if (Math.hypot(raw[i].x - P[P.length - 1].x, raw[i].z - P[P.length - 1].z) > 0.5) P.push(raw[i]);
+    if (P.length < 3) return raw;
+    const n = P.length, out = [P[0]], A = 0.5;             // A=0.5 → centripetal (no self-intersection/overshoot)
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(n - 1, i + 2)];
+      const dt = (a, b) => Math.pow(Math.hypot(b.x - a.x, b.z - a.z), A) || 1e-4;
+      const t0 = 0, t1 = t0 + dt(p0, p1), t2 = t1 + dt(p1, p2), t3 = t2 + dt(p2, p3);
+      const steps = Math.max(2, Math.min(10, Math.round(Math.hypot(p2.x - p1.x, p2.z - p1.z) / 6)));
+      for (let s = 1; s <= steps; s++) {
+        const t = t1 + (t2 - t1) * (s / steps);
+        const A1 = lerpP(p0, p1, (t - t0) / (t1 - t0 || 1)), A2 = lerpP(p1, p2, (t - t1) / (t2 - t1 || 1)), A3 = lerpP(p2, p3, (t - t2) / (t3 - t2 || 1));
+        const B1 = lerpP(A1, A2, (t - t0) / (t2 - t0 || 1)), B2 = lerpP(A2, A3, (t - t1) / (t3 - t1 || 1));
+        out.push(lerpP(B1, B2, (t - t1) / (t2 - t1 || 1)));
       }
-      out.push(p[p.length - 1]);
-      p = out;
     }
-    return p;
+    return out;
   };
   for (const r of world.roads) {
     const rp = smoothRoad(r.pts);
@@ -3034,6 +3042,9 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     world.roads.push({ pts: lineX, width: 14, kind: 'primary', name: 'Under Street', bridge: false, layer: 0, lanes: 2, oneway: false });
     world.roads.push({ pts: lineZ, width: 14, kind: 'primary', name: 'Overpass', bridge: true, layer: 1, lanes: 2, oneway: false });
     world.roads.push({ pts: cross, width: 12, kind: 'secondary', name: 'Cross Avenue', bridge: false, layer: 0, lanes: 2, oneway: false });
+    // jagged/sparse road (like raw OSM) at z≈110 to verify the Catmull-Rom centerline smoothing
+    const windy = [{ x: -200, z: 110 }, { x: -150, z: 140 }, { x: -90, z: 95 }, { x: -30, z: 150 }, { x: 40, z: 100 }, { x: 110, z: 145 }, { x: 190, z: 105 }];
+    world.roads.push({ pts: windy, width: 10, kind: 'tertiary', name: 'Windy Road', bridge: false, layer: 0, lanes: 2, oneway: false });
   }
   const centers = [{ x: 0, z: 0 }];   // loaded-area centers (grows as the world streams in)
   let expanding = false, expandTimer = 2;
