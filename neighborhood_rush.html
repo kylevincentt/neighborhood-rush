@@ -1928,6 +1928,23 @@ function buildWorld(world, heightAt, roadIdx, sharedColliders, homePoint) {
   // cul-de-sac turning circles: paved discs at tagged turning_circle / loop / mini-roundabout nodes
   for (const tc of (world.turningCircles || []))
     roadTB.disc(tc.x, heightAt(tc.x, tc.z) + 0.3, tc.z, 8.5, 22);
+  // SMART JUNCTIONS: at a real at-grade intersection, lay a unified asphalt pad over the messy
+  // overlapping ribbons and (sitting just above the paint) hide the lane lines running THROUGH the
+  // crossing — like a real junction. Skip overpass crossings (a bridge passing overhead isn't a junction).
+  {
+    const gy = (x, z) => (roadIdx && roadIdx.groundY ? roadIdx.groundY(x, z) : heightAt(x, z));
+    const bridgeNear = (x, z) => {
+      for (const r of world.roads) { if (!r.bridge) continue; for (const p of r.pts) if (Math.hypot(p.x - x, p.z - z) < 14) return true; }
+      return false;
+    };
+    for (const it of collectIntersections(world)) {
+      if (bridgeNear(it.x, it.z)) continue;
+      const nr = nearestRoadPoint(world, it.x, it.z);
+      const w = nr ? nr.width : 7;
+      if (w < 5) continue;                              // skip footpaths / driveways
+      roadTB.disc(it.x, gy(it.x, it.z) + 0.42, it.z, w / 2 + 1.2, 24);   // +0.42 sits over the markings
+    }
+  }
   // crosswalk zebra stripes at tagged crossing nodes
   for (const cw of world.crossings) {
     const nr = nearestRoadPoint(world, cw.x, cw.z);
@@ -3009,12 +3026,14 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
   if (TEST_OVERPASS) {
     heightAt = () => 0;                                  // perfectly flat ground
     world.roads.length = 0; world.buildings.length = 0; world.paths.length = 0;
-    const lineX = [], lineZ = [];
+    const lineX = [], lineZ = [], cross = [];
     for (let d = -240; d <= 240; d += 20) lineX.push({ x: d, z: 0 });          // long under-road
     for (let d = -18; d <= 18; d += 6) lineZ.push({ x: 0, z: d });             // SHORT overpass — its own
     // span-arch is only ~3.6m, so the guaranteed-clearance code must lift it to a drivable ~7m.
+    for (let d = -120; d <= 120; d += 20) cross.push({ x: -120, z: d });       // same-level cross street → at-grade junction at (-120,0)
     world.roads.push({ pts: lineX, width: 14, kind: 'primary', name: 'Under Street', bridge: false, layer: 0, lanes: 2, oneway: false });
     world.roads.push({ pts: lineZ, width: 14, kind: 'primary', name: 'Overpass', bridge: true, layer: 1, lanes: 2, oneway: false });
+    world.roads.push({ pts: cross, width: 12, kind: 'secondary', name: 'Cross Avenue', bridge: false, layer: 0, lanes: 2, oneway: false });
   }
   const centers = [{ x: 0, z: 0 }];   // loaded-area centers (grows as the world streams in)
   let expanding = false, expandTimer = 2;
