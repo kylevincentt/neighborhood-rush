@@ -1650,6 +1650,17 @@ function buildingGeometry(b, color, hBase) {
 // ---------------------------------------------------------------- road-bed system
 // Spatial index of road segments, used to flatten terrain under roads (kills both
 // the car-sinking and the terrain-bleeding-through-asphalt problems).
+const MIN_OVERPASS_CLEAR = 6.5;   // a bridge deck must clear any road it flies over by this much
+// segment–segment intersection (returns the crossing point or null) — for overpass clearance
+function segInt(ax, az, bx, bz, cx, cz, dx, dz) {
+  const r1x = bx - ax, r1z = bz - az, r2x = dx - cx, r2z = dz - cz;
+  const den = r1x * r2z - r1z * r2x;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((cx - ax) * r2z - (cz - az) * r2x) / den;
+  const u = ((cx - ax) * r1z - (cz - az) * r1x) / den;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: ax + r1x * t, z: az + r1z * t };
+}
 function addRoadsToIndex(idx, roads, heightAt) {
   for (const r of roads) {
     const pts = resamplePolyline(r.pts, 16);
@@ -1666,11 +1677,33 @@ function addRoadsToIndex(idx, roads, heightAt) {
       const midBase = (hA + hB) / 2;
       const dip = Math.max(0, midBase - minTerr);              // how far terrain falls away mid-span
       const clearance = Math.min(9, span * 0.10);              // bigger bridges sit higher (capped)
-      const peak = Math.max(0, clearance - dip);               // arch only as far as endpoints don't already clear
+      let peak = Math.max(0, clearance - dip);                 // arch from span/valley
+      const baseLineAt = (t) => hA * (1 - t) + hB * t;
+      // SMART CLEARANCE: where this bridge crosses a LOWER-layer road (real grade separation, per
+      // the OSM `layer` tag), raise the arch so the deck clears that road by MIN_OVERPASS_CLEAR —
+      // this is what makes real overpasses actually drivable-under instead of nearly at grade.
+      const cum = [0];
+      for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
+      const total = cum[n - 1] || 1;
+      const bridgeLayer = r.layer || 1;                        // an untagged bridge still counts as "up one"
+      for (const r2 of roads) {
+        if (r2 === r || (r2.layer || 0) >= bridgeLayer || !r2.pts || r2.pts.length < 2) continue;
+        for (let i = 0; i < n - 1; i++) for (let j = 0; j < r2.pts.length - 1; j++) {
+          const X = segInt(pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z,
+            r2.pts[j].x, r2.pts[j].z, r2.pts[j + 1].x, r2.pts[j + 1].z);
+          if (!X) continue;
+          const t = (cum[i] + Math.hypot(X.x - pts[i].x, X.z - pts[i].z)) / total;
+          const need = heightAt(X.x, X.z) + MIN_OVERPASS_CLEAR;           // clear the road below
+          const sh = Math.max(0.18, Math.sin(Math.PI * t));               // arch height factor at the crossing
+          const needPeak = (need - 0.6 - baseLineAt(t)) / sh;
+          if (needPeak > peak) peak = needPeak;
+        }
+      }
+      peak = Math.min(peak, 16);                               // cap absurd arches
       deckH = new Array(n);
       for (let i = 0; i < n; i++) {
         const t = n > 1 ? i / (n - 1) : 0;
-        deckH[i] = (hA * (1 - t) + hB * t) + peak * Math.sin(Math.PI * t) + 0.6;
+        deckH[i] = baseLineAt(t) + peak * Math.sin(Math.PI * t) + 0.6;
       }
     }
     for (let i = 0; i < pts.length - 1; i++) {
@@ -2977,7 +3010,9 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     heightAt = () => 0;                                  // perfectly flat ground
     world.roads.length = 0; world.buildings.length = 0; world.paths.length = 0;
     const lineX = [], lineZ = [];
-    for (let d = -240; d <= 240; d += 20) { lineX.push({ x: d, z: 0 }); lineZ.push({ x: 0, z: d }); }
+    for (let d = -240; d <= 240; d += 20) lineX.push({ x: d, z: 0 });          // long under-road
+    for (let d = -18; d <= 18; d += 6) lineZ.push({ x: 0, z: d });             // SHORT overpass — its own
+    // span-arch is only ~3.6m, so the guaranteed-clearance code must lift it to a drivable ~7m.
     world.roads.push({ pts: lineX, width: 14, kind: 'primary', name: 'Under Street', bridge: false, layer: 0, lanes: 2, oneway: false });
     world.roads.push({ pts: lineZ, width: 14, kind: 'primary', name: 'Overpass', bridge: true, layer: 1, lanes: 2, oneway: false });
   }
