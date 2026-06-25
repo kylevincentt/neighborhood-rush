@@ -1710,7 +1710,7 @@ function addRoadsToIndex(idx, roads, heightAt) {
       const s = { ax: pts[i].x, az: pts[i].z, bx: pts[i + 1].x, bz: pts[i + 1].z, w: r.width, name: r.name };
       if (deckH) { s.bridge = true; s.deckYA = deckH[i]; s.deckYB = deckH[i + 1]; }
       const id = idx.segs.push(s) - 1;
-      const pad = s.w / 2 + 10;
+      const pad = s.w / 2 + 50;   // broad-phase reach must cover the adaptive road-bed shoulder (steep hills)
       const minx = Math.min(s.ax, s.bx) - pad, maxx = Math.max(s.ax, s.bx) + pad;
       const minz = Math.min(s.az, s.bz) - pad, maxz = Math.max(s.az, s.bz) + pad;
       for (let gx = Math.floor(minx / idx.cell); gx <= Math.floor(maxx / idx.cell); gx++)
@@ -1757,7 +1757,14 @@ function makeSurfY(heightAt, idx, noBridge) {
     // noBridge=true skips this — used to draw the GROUND road network so a road passing UNDER an
     // overpass stays at its low height instead of spiking up to the deck at the crossing point.
     if (!noBridge && q.bridge && q.deckY != null && q.dist <= q.w / 2 + 1.0) return q.deckY;
-    const inner = q.w / 2 + 2.6, outer = q.w / 2 + 20;   // long shoulder so steep hills blend smoothly (no hard step)
+    const inner = q.w / 2 + 2.6;
+    // ADAPTIVE SHOULDER: measure how steeply the terrain rises/falls beside the road and stretch the
+    // grade accordingly, so a road cut into a steep hillside eases in over a long gentle ramp instead
+    // of a harsh cut-bank "step". Flat ground → short shoulder (≈ as before); steep → up to ~45m.
+    const gx = heightAt(q.px + 6, q.pz) - heightAt(q.px - 6, q.pz);
+    const gz = heightAt(q.px, q.pz + 6) - heightAt(q.px, q.pz - 6);
+    const slope = Math.hypot(gx, gz) / 12;
+    const outer = inner + Math.max(14, Math.min(45, slope * 70));
     if (q.dist >= outer) return h;
     const hc = heightAt(q.px, q.pz);
     if (q.dist <= inner) return hc;
@@ -2886,10 +2893,15 @@ function boot() {
   }
   renderSaved();
 
-  // deterministic test rig — skip geocoding/terrain entirely and build a synthetic overpass world
+  // deterministic test rigs — skip geocoding/terrain entirely and build a synthetic world
   if (location.search.includes('test=overpass')) {
     startOverlay.style.display = 'none'; loadingOverlay.style.display = 'none';
     startGame({ lat: 37.5, lon: -122.3, name: 'Test Overpass' }, { elements: [] }, () => 0, true, null);
+    return;
+  }
+  if (location.search.includes('test=hill')) {   // steep slope: heightAt rises with z (a hillside)
+    startOverlay.style.display = 'none'; loadingOverlay.style.display = 'none';
+    startGame({ lat: 37.5, lon: -122.3, name: 'Test Hill' }, { elements: [] }, (x, z) => z * 0.55, true, null);
     return;
   }
 
@@ -3045,6 +3057,15 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     // jagged/sparse road (like raw OSM) at z≈110 to verify the Catmull-Rom centerline smoothing
     const windy = [{ x: -200, z: 110 }, { x: -150, z: 140 }, { x: -90, z: 95 }, { x: -30, z: 150 }, { x: 40, z: 100 }, { x: 110, z: 145 }, { x: 190, z: 105 }];
     world.roads.push({ pts: windy, width: 10, kind: 'tertiary', name: 'Windy Road', bridge: false, layer: 0, lanes: 2, oneway: false });
+  }
+  // hill rig: a road cutting ACROSS a steep slope (the cut-bank "step" case) + a road going UP it
+  const TEST_HILL = typeof location !== 'undefined' && location.search.includes('test=hill');
+  if (TEST_HILL) {
+    world.roads.length = 0; world.buildings.length = 0; world.paths.length = 0;
+    const contour = [], climb = [];
+    for (let d = -200; d <= 200; d += 20) { contour.push({ x: d, z: 0 }); climb.push({ x: 120, z: d }); }
+    world.roads.push({ pts: contour, width: 14, kind: 'primary', name: 'Contour Road', bridge: false, layer: 0, lanes: 2, oneway: false });
+    world.roads.push({ pts: climb, width: 12, kind: 'secondary', name: 'Hill Climb', bridge: false, layer: 0, lanes: 2, oneway: false });
   }
   const centers = [{ x: 0, z: 0 }];   // loaded-area centers (grows as the world streams in)
   let expanding = false, expandTimer = 2;
@@ -3300,6 +3321,12 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
     car.x = -70; car.z = 0; car.heading = Math.PI / 2; car.vx = car.vz = car.vy = 0;
     car.y = groundLevel(car.x, car.z, 0);
     dude.x = -70; dude.z = 5; dude.heading = Math.PI / 2; dude.y = groundLevel(dude.x, dude.z, 0);
+    carMeshes[0].position.set(car.x, car.y, car.z); carMeshes[0].rotation.set(0, car.heading, 0);
+  }
+  if (TEST_HILL) {   // start on the contour road that cuts across the slope
+    car.x = -60; car.z = 0; car.heading = Math.PI / 2; car.vx = car.vz = car.vy = 0;
+    car.y = groundLevel(car.x, car.z, 0);
+    dude.x = -60; dude.z = 6; dude.heading = 0; dude.y = groundLevel(dude.x, dude.z, 0);
     carMeshes[0].position.set(car.x, car.y, car.z); carMeshes[0].rotation.set(0, car.heading, 0);
   }
   scene.add(dude.mesh);
