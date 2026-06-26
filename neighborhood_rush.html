@@ -4281,17 +4281,21 @@ function startGame(loc, osm, heightAt, flatWorld, terrainExtend) {
       car.vz = fwz * vF + rgz * vL;
       car.heading += steer * steerRate * dt * Math.sign(vF || 1) * (grounded ? 1 : 0.35);
       car.x += car.vx * dt; car.z += car.vz * dt;
-      // vertical: inertia keeps you flying off crests, gravity brings you down
+      // vertical: gravity brings you down; "suspension" keeps the wheels glued to the terrain so the
+      // car follows undulations smoothly instead of launching off every little crest (no bounding).
       car.vy -= G_CAR * dt;
       car.y += car.vy * dt;
       const gH = groundLevel(car.x, car.z, car.y);
+      const STICK = 2.4;   // crest gap below this (and not launched upward) → snap back to the ground
       if (car.y <= gH) {
-        if (car.vy < -9) {
-          shake = Math.min(0.9, shake - car.vy * 0.022);
-          car.vy = -car.vy * (TYPE.bounce || 0.22);             // monster truck is extra bouncy
+        if (car.vy < -16) {                                      // only a genuinely HARD landing bounces
+          shake = Math.min(0.9, shake - car.vy * 0.018);
+          car.vy = -car.vy * (TYPE.bounce || 0.22);
           audio.thump();
         } else car.vy = 0;
         car.y = gH;
+      } else if (car.vy <= 0 && car.y - gH < STICK) {           // cresting a rise → hug the terrain
+        car.y = gH; car.vy = 0;
       }
       // crash: reflect velocity off the building's normal, bouncy SHnR-style.
       // Two colliders: body center + nose point, so the bumper hits the wall, not the middle.
